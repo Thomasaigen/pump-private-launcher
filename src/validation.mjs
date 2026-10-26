@@ -22,10 +22,10 @@ export function validateSpec(input) {
   const name = text(input.name, 32, 'name'); const symbol = text(input.symbol, 10, 'symbol'); const uri = text(input.uri, 200, 'metadata URI');
   let url; try { url = new URL(uri); } catch { fail('Invalid metadata URI.'); }
   if (!['https:', 'ipfs:'].includes(url.protocol)) fail('Metadata URI must use HTTPS or IPFS.');
-  if (!Array.isArray(input.buyers) || input.buyers.length !== 3) fail('Exactly three buyer wallets are required.');
+  if (!Array.isArray(input.buyers) || input.buyers.length < 1 || input.buyers.length > 3) fail('Use between one and three buyer wallets.');
   const dev = address(input.dev), creator = address(input.creator), mint = address(input.mint);
   const buyers = input.buyers.map(b => ({ address: address(b.address), amount: lamports(b.amount, 'Buyer amount') }));
-  if (new Set([dev, ...buyers.map(b => b.address), mint]).size !== 5) fail('Use distinct developer, buyer and mint addresses.');
+  if (new Set([dev, ...buyers.map(b => b.address), mint]).size !== 2 + buyers.length) fail('Use distinct developer, buyer and mint addresses.');
   const slippageBps = Number(input.slippageBps ?? 100);
   if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 1000) fail('Slippage must be between 0 and 10%.');
   const priorityMicroLamports = Number(input.priorityMicroLamports ?? 10000);

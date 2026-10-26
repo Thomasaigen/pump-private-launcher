@@ -111,6 +111,7 @@ test('passwords of 5–256 characters are accepted, including the requested seve
 test('SOL parsing is exact and rejects exponent, negative, overflow and extra decimals', () => {
   assert.equal(lamports('0.000000001'), '1'); assert.equal(lamports('1.123456789'), '1123456789');
   for (const value of ['-1', '1e2', '0.0000000001', '51', 'NaN', 'Infinity']) assert.throws(() => lamports(value));
+  assert.throws(() => validateSpec({ ...spec(), buyers: [1, 2, 3, 4].map(i => ({ address: keys[5].publicKey.toBase58(), amount: '0.01' })) }));
   assert.throws(() => validateSpec({ ...spec(), buyers: [] }));
   assert.throws(() => validateSpec({ ...spec(), creator: PublicKey.default.toBase58() }));
 });

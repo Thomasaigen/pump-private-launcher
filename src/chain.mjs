@@ -33,12 +33,12 @@ export async function buildTransactions(spec, { global, feeConfig, blockhash, la
     if (i === 0) instructions.push(await PUMP_SDK.createV2Instruction({ mint, name: spec.name, symbol: spec.symbol, uri: spec.uri, creator, user: dev, mayhemMode: false, cashback: false, holderReward: false, quoteMint: NATIVE_MINT, quoteTokenProgram: TOKEN_PROGRAM_ID }));
     instructions.push(...await PUMP_SDK.buyV3Instructions({ bondingCurve: curve, associatedUserAccountInfo: null, mint, user, amount, quoteAmount: maxCost, slippage: 0, tokenProgram: TOKEN_2022_PROGRAM_ID, quoteTokenProgram: TOKEN_PROGRAM_ID, buybackFeeRecipient: global.buybackFeeRecipients[0], partialFill: false }));
     // Embed the tip in the final buy so it cannot land as a stand-alone tip transaction.
-    if (i === 3) instructions.push(SystemProgram.transfer({ fromPubkey: user, toPubkey: new PublicKey(tipAccount), lamports: BigInt(spec.tip) }));
+    if (i === wallets.length - 1) instructions.push(SystemProgram.transfer({ fromPubkey: user, toPubkey: new PublicKey(tipAccount), lamports: BigInt(spec.tip) }));
     const tx = new VersionedTransaction(new TransactionMessage({ payerKey: user, recentBlockhash: blockhash, instructions }).compileToV0Message());
     let wire; try { wire = tx.serialize(); } catch { fail('Transaction exceeds the Solana size limit. Shorten the metadata URI.'); }
     if (wire.length > 1232) fail('Transaction exceeds 1,232 bytes. Shorten the metadata URI.');
     transactions.push(Buffer.from(wire).toString('base64'));
-    summary.push({ label: i === 0 ? 'Launch + developer buy' : `Buyer ${i}`, wallet: wallet.address, tokensRaw: amount.toString(), expectedBuyLamports: expectedCost.toString(), maxBuyLamports: maxCost.toString(), tipLamports: i === 3 ? spec.tip : '0', bytes: wire.length });
+    summary.push({ label: i === 0 ? 'Launch + developer buy' : `Buyer ${i}`, wallet: wallet.address, tokensRaw: amount.toString(), expectedBuyLamports: expectedCost.toString(), maxBuyLamports: maxCost.toString(), tipLamports: i === wallets.length - 1 ? spec.tip : '0', bytes: wire.length });
     // Exact-token buys advance reserves by their fee-exclusive curve cost.
     const netCost = amount.mul(curve.virtualQuoteReserves).div(curve.virtualTokenReserves.sub(amount)).addn(1);
     curve.virtualTokenReserves = curve.virtualTokenReserves.sub(amount);
