@@ -17,15 +17,16 @@ async function api(url, body) {
 }
 const sol = value => { const n = BigInt(value); return `${n / 1_000_000_000n}.${(n % 1_000_000_000n).toString().padStart(9, '0')}`.replace(/\.?0+$/, ''); };
 function invalidate() { prepared = null; mintKey = null; signed = null; signingTransactions = null; simulatedAt = 0; $('#review').hidden = true; $('#confirm').checked = false; $('#submit').disabled = true; }
-function clearWallets() { wallets.clear(); invalidate(); document.querySelectorAll('.wallet-address').forEach(n => n.textContent = 'No wallet selected'); document.querySelectorAll('input[type=file], .private-key-input').forEach(n => n.value = ''); }
+function clearWallets() { wallets.clear(); invalidate(); document.querySelectorAll('.wallet-address').forEach(n => n.textContent = 'No wallet selected'); document.querySelectorAll('input[type=file], .private-key-input').forEach(n => n.value = ''); $('#creator-select').value = ''; $('#creator-address').textContent = 'No creator selected'; }
 async function task(fn) {
   if (busy) return; busy = true; errorBox.textContent = '';
-  const controls = [...document.querySelectorAll('button, input')].map(n => [n, n.disabled]); controls.forEach(([n]) => n.disabled = true);
+  const controls = [...document.querySelectorAll('button, input, select')].map(n => [n, n.disabled]); controls.forEach(([n]) => n.disabled = true);
   try { await fn(); } catch (e) {
     errorBox.textContent = e.message;
     if (e.data?.signatures) { $('#details').hidden = false; $('#details').textContent = JSON.stringify(e.data, null, 2); }
-  } finally { busy = false; controls.forEach(([n, disabled]) => n.disabled = disabled); updateSubmit(); }
+  } finally { busy = false; controls.forEach(([n, disabled]) => n.disabled = disabled); updateCreatorControls(); updateSubmit(); }
 }
+function updateCreatorControls() { $('#creator-select').disabled = busy || !session?.creators?.ready; $('#prepare').disabled = busy || !session?.creators?.ready; }
 function updateSubmit() { $('#submit').disabled = busy || !prepared || !signed || !session?.launchEnabled || !$('#confirm').checked || Date.now() - simulatedAt > 30000 || Boolean(prepared.bundleId); }
 function walletRow(role, title, amount) {
   const row = el('div', null, 'wallet-row'); const head = el('div', null, 'wallet-head'); head.append(el('b', title));
@@ -67,26 +68,19 @@ function walletRow(role, title, amount) {
   })); fileLabel.append(file); buttons.append(fileLabel); row.append(head, addressNode, importArea, buttons); return row;
 }
 for (const [role, title] of [['dev', 'Developer / launch wallet'], ['buyer1', 'Buyer 1'], ['buyer2', 'Buyer 2'], ['buyer3', 'Buyer 3']]) $('#wallet-rows').append(walletRow(role, title, '0.01'));
-$('#creator-row').append(walletRow('creator', 'Separate authorized creator wallet'));
-$('#same-creator').addEventListener('change', () => { $('#creator-row').hidden = $('#same-creator').checked; invalidate(); });
+$('#creator-select').addEventListener('change', () => { $('#creator-address').textContent = $('#creator-select').value || 'No creator selected'; invalidate(); });
 $('#launch-form').addEventListener('input', invalidate);
 $('#clear-wallets').addEventListener('click', clearWallets);
 $('#logout').addEventListener('click', () => task(async () => { clearWallets(); await api('/auth/logout', {}); location.replace('/login'); }));
 function requireWallet(role) { const w = wallets.get(role); if (!w) throw new Error(`Select the ${role} wallet.`); return w; }
-async function messageSignature(wallet, message) {
-  const bytes = new TextEncoder().encode(message);
-  if (wallet.keypair) return Buffer.from(nacl.sign.detached(bytes, wallet.keypair.secretKey)).toString('base64');
-  if (wallet.provider.publicKey?.toString() !== wallet.address) throw new Error(`Switch your wallet extension to ${wallet.address}, then try again.`);
-  const result = await wallet.provider.signMessage(bytes, 'utf8'); return Buffer.from(result.signature || result).toString('base64');
-}
 $('#launch-form').addEventListener('submit', event => { event.preventDefault(); const data = new FormData(event.currentTarget); task(async () => {
   invalidate();
-  const dev = requireWallet('dev'), creator = $('#same-creator').checked ? dev : requireWallet('creator');
+  const dev = requireWallet('dev'), creator = session.creators.wallets.find(w => w.address === data.get('creator'));
+  if (!session.creators.ready || !creator) throw new Error('Select a creator wallet configured in Railway.');
   mintKey = Keypair.generate();
   const spec = { name: data.get('name'), symbol: data.get('symbol'), uri: data.get('uri'), dev: dev.address, creator: creator.address, mint: mintKey.publicKey.toBase58(), devAmount: data.get('dev-amount'), buyers: [1, 2, 3].map(i => ({ address: requireWallet(`buyer${i}`).address, amount: data.get(`buyer${i}-amount`) })), tip: data.get('tip'), slippageBps: Math.round(Number(data.get('slippage')) * 100), priorityMicroLamports: Number(data.get('priority')) };
   const authorization = await api('/api/authorize', spec);
-  const signature = await messageSignature(creator, authorization.message);
-  prepared = await api('/api/prepare', { id: authorization.id, signature }); renderReview();
+  prepared = await api('/api/prepare', { id: authorization.id }); renderReview();
 }); });
 function renderReview() {
   const content = $('#review-content'); content.replaceChildren();
@@ -139,8 +133,12 @@ $('#status').addEventListener('click', () => task(async () => {
 }));
 task(async () => {
   session = await api('/api/session');
-  $('#readiness').textContent = session.launchEnabled ? 'Mainnet submission enabled' : 'Preparation mode';
+  const creatorSelect = $('#creator-select');
+  for (const wallet of session.creators.wallets) { const option = el('option', `${wallet.label} · ${wallet.address.slice(0, 6)}…${wallet.address.slice(-6)}`); option.value = wallet.address; creatorSelect.append(option); }
+  $('#creator-configuration').textContent = session.creators.ready ? `${session.creators.wallets.length} configured creator wallet${session.creators.wallets.length === 1 ? '' : 's'} available. Select one and verify its full address below.` : session.creators.error;
+  $('#readiness').textContent = !session.creators.ready ? 'Creator setup needed' : session.launchEnabled ? 'Mainnet submission enabled' : 'Preparation mode';
   const missing = []; if (!session.rpcConfigured) missing.push('SOLANA_RPC_URL'); if (!session.simulationConfigured) missing.push('BUNDLE_SIMULATION_RPC_URL');
+  if (!session.creators.ready) missing.push('CREATOR_PRIVATE_KEY_1');
   $('#notice').textContent = missing.length ? `Railway setup needed: ${missing.join(', ')}. Submission also requires ENABLE_LAUNCH=true and successful bundle simulation.` : session.launchEnabled ? 'Mainnet transactions use real SOL. Submission requires your explicit review and approval.' : 'Submission is disabled. You can prepare and simulate; enable it with ENABLE_LAUNCH=true in Railway when ready.';
 });
 window.addEventListener('pagehide', clearWallets);

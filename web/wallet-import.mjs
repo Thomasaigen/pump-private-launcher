@@ -1,7 +1,8 @@
 import { Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
 
-// Browser-only parsing. This module performs no network or storage operations.
+// Shared key parser: browser trading wallets and server-only creator configuration.
+// This module performs no network or storage operations.
 export function parsePrivateKey(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 2000) {
     throw new Error('Paste a base58 Solana private key or a 64-byte keypair JSON array.');

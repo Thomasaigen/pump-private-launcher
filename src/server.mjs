@@ -7,12 +7,14 @@ import { createAuth } from './auth.mjs';
 import { validateSpec, verifyAuthorization, verifySignedTransactions, fail } from './validation.mjs';
 import { createChain } from './chain.mjs';
 import { runDiagnostics } from './diagnostics.mjs';
+import { createCreatorWallets } from './creator-wallets.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export function createApp(env = process.env, injectedChain) {
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', 1);
   const auth = createAuth({ password: env.APP_PASSWORD, production: env.NODE_ENV === 'production' });
   const chain = injectedChain || createChain(env);
+  const creators = createCreatorWallets(env);
   const challenges = new Map(), bundles = new Map();
   const now = Date.now;
   const cleanup = setInterval(() => { for (const map of [challenges, bundles]) for (const [id, row] of map) if (row.expires < now()) map.delete(id); }, 60000); cleanup.unref();
@@ -49,12 +51,13 @@ export function createApp(env = process.env, injectedChain) {
     next();
   });
   app.post('/auth/logout', (req, res) => { auth.logout(req); res.set('Set-Cookie', auth.cookie('', 0)); res.json({ ok: true }); });
-  app.get('/api/session', (req, res) => res.json({ csrf: req.session.csrf, expires: req.session.expires, launchEnabled: chain.enabled, rpcConfigured: chain.configured, simulationConfigured: chain.simulationConfigured }));
-  app.get('/api/readiness', (_req, res) => res.json(app.locals.readiness || { pending: true }));
+  app.get('/api/session', (req, res) => res.json({ csrf: req.session.csrf, expires: req.session.expires, launchEnabled: chain.enabled, rpcConfigured: chain.configured, simulationConfigured: chain.simulationConfigured, creators: creators.describe() }));
+  app.get('/api/readiness', (_req, res) => res.json({ ...(app.locals.readiness || { pending: true }), creators: creators.describe() }));
   app.get('/', (_req, res) => res.sendFile(path.join(root, 'web/index.html')));
   app.get('/app.js', (_req, res) => res.sendFile(path.join(root, 'dist/app.js')));
   app.post('/api/authorize', (req, res) => {
     const spec = validateSpec(req.body);
+    creators.requireWallet(spec.creator);
     if (challenges.size >= 200) fail('Too many pending authorizations. Wait for them to expire.', 429);
     const id = randomBytes(24).toString('hex'), expires = now() + 600000;
     const message = `Pump Private Launcher — creator authorization\nOrigin: ${origin(req)}\nThis is a message signature, not a transaction.\nI authorize this app to record my wallet as creator of the following token.\nMint: ${spec.mint}\nCreator: ${spec.creator}\nLauncher: ${spec.dev}\nName: ${spec.name}\nSymbol: ${spec.symbol}\nMetadata: ${spec.uri}\nSettings SHA-256: ${createHash('sha256').update(JSON.stringify(spec)).digest('hex')}\nExpires: ${new Date(expires).toISOString()}\nNonce: ${id}`;
@@ -64,7 +67,10 @@ export function createApp(env = process.env, injectedChain) {
   app.post('/api/prepare', async (req, res) => {
     const challenge = challenges.get(req.body?.id);
     if (!challenge || challenge.session !== req.session.id || challenge.expires < now() || challenge.used) fail('Authorization expired or already used. Start again.', 403);
-    if (!verifyAuthorization(challenge.message, req.body.signature, challenge.spec.creator)) fail('The selected creator wallet must sign its authorization.', 403);
+    // Only a key configured on the server can authorize a creator. Never accept a
+    // client-supplied approval or expose a general-purpose signing endpoint.
+    const signature = creators.signAuthorization(challenge.spec.creator, challenge.message);
+    if (!verifyAuthorization(challenge.message, signature, challenge.spec.creator)) fail('Creator authorization failed.', 403);
     challenge.used = true;
     if (bundles.size >= 100) fail('Too many prepared bundles. Wait for them to expire.', 429);
     const prepared = await chain.prepare(challenge.spec);
@@ -113,11 +119,13 @@ export function createApp(env = process.env, injectedChain) {
     const status = error.status || 500;
     res.status(status).json({ error: error.status ? error.message : 'Operation failed. Check provider configuration, balances and current protocol support, then prepare again.' });
   });
-  app.locals.close = () => { clearInterval(cleanup); auth.close(); };
+  app.locals.creatorConfiguration = () => { const { ready, error, wallets } = creators.describe(); return { ready, error, count: wallets.length }; };
+  app.locals.close = () => { clearInterval(cleanup); auth.close(); creators.close(); };
   return app;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const app = createApp();
+  console.log(JSON.stringify({ event: 'creator-wallet-configuration', ...app.locals.creatorConfiguration() }));
   app.listen(Number(process.env.PORT || 3000), '0.0.0.0', () => console.log('Private launcher listening.'));
   runDiagnostics(process.env).then(report => {
     app.locals.readiness = report;
