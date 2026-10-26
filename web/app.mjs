@@ -78,8 +78,9 @@ $('#launch-form').addEventListener('submit', event => { event.preventDefault(); 
   const dev = requireWallet('dev'), creator = session.creators.wallets.find(w => w.address === data.get('creator'));
   if (!session.creators.ready || !creator) throw new Error('Select a creator wallet configured in Railway.');
   mintKey = Keypair.generate();
-  const image = data.get('image'); let uri = String(data.get('uri') || '').trim();
-  if (image && image.size) {
+  const image = data.get('image'); let uri;
+  if (!image || !image.size) throw new Error('Upload a token image from your computer.');
+  {
     if (image.size > 5 * 1024 * 1024) throw new Error('Image must be 5 MB or smaller.');
     const query = new URLSearchParams({ name: data.get('name'), symbol: data.get('symbol'), description: data.get('description') || '' });
     const response = await fetch(`/api/upload-metadata?${query}`, { method: 'POST', headers: { 'content-type': image.type, 'x-requested-with': 'launcher', 'x-csrf-token': session.csrf }, body: image });
@@ -88,7 +89,6 @@ $('#launch-form').addEventListener('submit', event => { event.preventDefault(); 
     if (!response.ok) throw new Error(result.error || 'Image upload failed.');
     uri = result.uri;
   }
-  if (!uri) throw new Error('Choose a token image or paste a metadata URI.');
   const spec = { name: data.get('name'), symbol: data.get('symbol'), uri, dev: dev.address, creator: creator.address, mint: mintKey.publicKey.toBase58(), devAmount: data.get('dev-amount'), buyers: [1, 2, 3].map(i => ({ address: requireWallet(`buyer${i}`).address, amount: data.get(`buyer${i}-amount`) })), tip: data.get('tip'), slippageBps: Math.round(Number(data.get('slippage')) * 100), priorityMicroLamports: Number(data.get('priority')) };
   const authorization = await api('/api/authorize', spec);
   prepared = await api('/api/prepare', { id: authorization.id }); renderReview();
@@ -153,3 +153,20 @@ task(async () => {
   $('#notice').textContent = missing.length ? `Railway setup needed: ${missing.join(', ')}. Submission also requires ENABLE_LAUNCH=true and successful bundle simulation.` : session.launchEnabled ? 'Mainnet transactions use real SOL. Submission requires your explicit review and approval.' : 'Submission is disabled. You can prepare and simulate; enable it with ENABLE_LAUNCH=true in Railway when ready.';
 });
 window.addEventListener('pagehide', clearWallets);
+
+{
+  const input = $('#image'), zone = $('#dropzone'), preview = $('#image-preview'), text = $('#dropzone-text');
+  const show = () => {
+    const file = input.files[0];
+    if (!file) { preview.hidden = true; preview.removeAttribute('src'); text.innerHTML = ''; text.append(el('b', 'Upload token image'), el('small', 'Drop a file here or click to choose one from your computer. PNG, JPEG, GIF or WebP, up to 5 MB.')); return; }
+    const reader = new FileReader();
+    reader.onload = () => { preview.src = reader.result; preview.hidden = false; };
+    reader.readAsDataURL(file);
+    text.innerHTML = ''; text.append(el('b', file.name), el('small', `${(file.size / 1024).toFixed(0)} KB · click or drop to replace`));
+    invalidate();
+  };
+  input.addEventListener('change', show);
+  for (const type of ['dragenter', 'dragover']) zone.addEventListener(type, e => { e.preventDefault(); zone.classList.add('over'); });
+  for (const type of ['dragleave', 'drop']) zone.addEventListener(type, e => { e.preventDefault(); zone.classList.remove('over'); });
+  zone.addEventListener('drop', e => { if (e.dataTransfer?.files?.length) { input.files = e.dataTransfer.files; show(); } });
+}

@@ -25,7 +25,7 @@ export function createStorage(env, fetchImpl = fetch) {
   return {
     get configured() { return Boolean(jwt); },
     async uploadToken({ image, contentType, name, symbol, description }) {
-      if (!jwt) fail('Add PINATA_JWT in Railway to upload images, then redeploy. Or paste a metadata URI instead.', 503);
+      if (!jwt) fail('Add PINATA_JWT in Railway to upload images, then redeploy.', 503);
       const check = TYPES[contentType];
       if (!check) fail('Image must be PNG, JPEG, GIF or WebP.', 415);
       if (!Buffer.isBuffer(image) || image.length === 0) fail('Choose an image file.');
