@@ -9,7 +9,7 @@ Open the `launcher` service → **Variables**. Set:
 | Variable | Value / purpose |
 | --- | --- |
 | `APP_PASSWORD` | Your own unique password, 5–256 characters. Required for access. Never commit it. |
-| `CREATOR_PRIVATE_KEY_1` | Server-only private key for your first creator wallet: base58 or a 64-byte Solana keypair JSON array. A public address alone is rejected. |
+| `CREATOR_PRIVATE_KEY_1` | Server-only private key for your first creator wallet: base58 or a 64-byte Solana keypair JSON array. A plain public wallet address is also accepted; the creator is then recorded without a server-side signature check. |
 | `CREATOR_LABEL_1` | Optional display label, up to 40 characters. Repeat the matching private-key and label variables with suffixes `_2` through `_50` for more creator wallets. |
 | `SOLANA_RPC_URL` | An HTTPS Solana mainnet RPC endpoint. |
 | `BUNDLE_SIMULATION_RPC_URL` | An HTTPS RPC endpoint supporting Jito-Solana `simulateBundle`, such as QuickNode with the Lil' JIT add-on. A standard Solana endpoint alone is insufficient. |
