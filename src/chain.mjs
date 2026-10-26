@@ -24,27 +24,34 @@ export async function buildTransactions(spec, { global, feeConfig, blockhash, la
   const transactions = [], summary = [];
   for (let i = 0; i < wallets.length; i++) {
     const wallet = wallets[i], user = new PublicKey(wallet.address), budget = new BN(wallet.amount);
+    // A zero developer amount creates the token without a developer buy.
+    const buys = !(i === 0 && budget.isZero());
     const quoteArgs = { global, feeConfig, mintSupply: global.tokenTotalSupply, bondingCurve: curve, quoteMint: NATIVE_MINT };
-    const amount = getBuyTokenAmountFromSolAmount({ ...quoteArgs, amount: budget });
-    if (amount.isZero() || amount.gte(curve.realTokenReserves)) fail('Initial buys must leave the bonding curve incomplete. Reduce amounts.');
-    const expectedCost = getBuySolAmountFromTokenAmount({ ...quoteArgs, amount });
-    const maxCost = expectedCost.muln(10000 + spec.slippageBps).addn(9999).divn(10000);
+    let amount = new BN(0), expectedCost = new BN(0), maxCost = new BN(0);
+    if (buys) {
+      amount = getBuyTokenAmountFromSolAmount({ ...quoteArgs, amount: budget });
+      if (amount.isZero() || amount.gte(curve.realTokenReserves)) fail('Initial buys must leave the bonding curve incomplete. Reduce amounts.');
+      expectedCost = getBuySolAmountFromTokenAmount({ ...quoteArgs, amount });
+      maxCost = expectedCost.muln(10000 + spec.slippageBps).addn(9999).divn(10000);
+    }
     const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: i === 0 ? 500000 : 250000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: spec.priorityMicroLamports })];
     if (i === 0) instructions.push(await PUMP_SDK.createV2Instruction({ mint, name: spec.name, symbol: spec.symbol, uri: spec.uri, creator, user: dev, mayhemMode: false, cashback: false, holderReward: false, quoteMint: NATIVE_MINT, quoteTokenProgram: TOKEN_PROGRAM_ID }));
-    instructions.push(...await PUMP_SDK.buyV3Instructions({ bondingCurve: curve, associatedUserAccountInfo: null, mint, user, amount, quoteAmount: maxCost, slippage: 0, tokenProgram: TOKEN_2022_PROGRAM_ID, quoteTokenProgram: TOKEN_PROGRAM_ID, buybackFeeRecipient: global.buybackFeeRecipients[0], partialFill: false }));
+    if (buys) instructions.push(...await PUMP_SDK.buyV3Instructions({ bondingCurve: curve, associatedUserAccountInfo: null, mint, user, amount, quoteAmount: maxCost, slippage: 0, tokenProgram: TOKEN_2022_PROGRAM_ID, quoteTokenProgram: TOKEN_PROGRAM_ID, buybackFeeRecipient: global.buybackFeeRecipients[0], partialFill: false }));
     // Embed the tip in the final buy so it cannot land as a stand-alone tip transaction.
     if (i === wallets.length - 1) instructions.push(SystemProgram.transfer({ fromPubkey: user, toPubkey: new PublicKey(tipAccount), lamports: BigInt(spec.tip) }));
     const tx = new VersionedTransaction(new TransactionMessage({ payerKey: user, recentBlockhash: blockhash, instructions }).compileToV0Message());
     let wire; try { wire = tx.serialize(); } catch { fail('Transaction exceeds the Solana size limit. Shorten the metadata URI.'); }
     if (wire.length > 1232) fail('Transaction exceeds 1,232 bytes. Shorten the metadata URI.');
     transactions.push(Buffer.from(wire).toString('base64'));
-    summary.push({ label: i === 0 ? 'Launch + developer buy' : `Buyer ${i}`, wallet: wallet.address, tokensRaw: amount.toString(), expectedBuyLamports: expectedCost.toString(), maxBuyLamports: maxCost.toString(), tipLamports: i === wallets.length - 1 ? spec.tip : '0', bytes: wire.length });
+    summary.push({ label: i === 0 ? (buys ? 'Launch + developer buy' : 'Launch, no developer buy') : `Buyer ${i}`, wallet: wallet.address, tokensRaw: amount.toString(), expectedBuyLamports: expectedCost.toString(), maxBuyLamports: maxCost.toString(), tipLamports: i === wallets.length - 1 ? spec.tip : '0', bytes: wire.length });
     // Exact-token buys advance reserves by their fee-exclusive curve cost.
+    if (buys) {
     const netCost = amount.mul(curve.virtualQuoteReserves).div(curve.virtualTokenReserves.sub(amount)).addn(1);
     curve.virtualTokenReserves = curve.virtualTokenReserves.sub(amount);
     curve.realTokenReserves = curve.realTokenReserves.sub(amount);
     curve.virtualQuoteReserves = curve.virtualQuoteReserves.add(netCost);
     curve.realQuoteReserves = curve.realQuoteReserves.add(netCost);
+    }
   }
   return { transactions, summary, blockhash, lastValidBlockHeight, mint: spec.mint, creator: spec.creator, tipAccount };
 }

@@ -30,7 +30,7 @@ export function validateSpec(input) {
   if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 1000) fail('Slippage must be between 0 and 10%.');
   const priorityMicroLamports = Number(input.priorityMicroLamports ?? 10000);
   if (!Number.isSafeInteger(priorityMicroLamports) || priorityMicroLamports < 0 || priorityMicroLamports > 1_000_000) fail('Invalid priority fee.');
-  const devAmount = lamports(input.devAmount, 'Developer amount');
+  const devAmount = lamports(input.devAmount, 'Developer amount', 0n);
   const tip = lamports(input.tip, 'Jito tip', 1000n, 100_000_000n);
   if ([devAmount, ...buyers.map(b => b.amount)].reduce((sum, v) => sum + BigInt(v), 0n) > 50_000_000_000n) fail('Total initial buys must not exceed 50 SOL.');
   return { name, symbol, uri, dev, creator, mint, devAmount, buyers, slippageBps, priorityMicroLamports, tip };

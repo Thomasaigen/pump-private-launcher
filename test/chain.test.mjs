@@ -46,3 +46,17 @@ test('with fewer buyers the tip is paid in the last transaction', async () => {
     assert.deepEqual(result.summary.map(r => r.tipLamports !== '0'), result.summary.map((_, i) => i === count));
   }
 });
+test('a zero developer amount creates the token without a developer buy', async () => {
+  const keys = Array.from({ length: 6 }, () => Keypair.generate());
+  const fixture = JSON.parse(fs.readFileSync(new URL('./global-fixture.json', import.meta.url)));
+  const global = PUMP_SDK.decodeGlobal({ data: Buffer.from(fixture.base64, 'base64'), executable: false, lamports: 0, owner: PUMP_PROGRAM_ID });
+  const base = { name: 'Authorized launch', symbol: 'AUTH', uri: 'https://ipfs.io/ipfs/QmRu5YpS3YTVFu6ArXVbeeRcAHjnKS4Ry9opcRGmTT5REt', mint: keys[0].publicKey.toBase58(), dev: keys[1].publicKey.toBase58(), creator: keys[2].publicKey.toBase58(), buyers: [3, 4].map(i => ({ address: keys[i].publicKey.toBase58(), amount: '0.5' })), tip: '0.001' };
+  const build = devAmount => buildTransactions(validateSpec({ ...base, devAmount }), { global, feeConfig: null, blockhash: PublicKey.default.toBase58(), lastValidBlockHeight: 100, tipAccount: Keypair.generate().publicKey.toBase58() });
+  const zero = await build('0'), some = await build('0.1');
+  assert.equal(zero.transactions.length, 3);
+  assert.equal(zero.summary[0].tokensRaw, '0'); assert.equal(zero.summary[0].maxBuyLamports, '0');
+  assert.notEqual(some.summary[0].tokensRaw, '0');
+  assert.ok(BigInt(zero.summary[1].tokensRaw) > BigInt(some.summary[1].tokensRaw));
+  assert.deepEqual(zero.summary.map(r => r.tipLamports !== '0'), [false, false, true]);
+  assert.ok(Buffer.from(zero.transactions[0], 'base64').length < Buffer.from(some.transactions[0], 'base64').length);
+});
