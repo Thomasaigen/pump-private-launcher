@@ -18,10 +18,10 @@ test('creator addresses are derived from consistent private keys, with no secret
   wallets.close(); assert.equal(wallets.describe().ready, false);
   assert.throws(() => wallets.signAuthorization(first.publicKey.toBase58(), message));
 });
-test('any invalid, public-only, duplicated or inconsistent key disables the entire creator list', () => {
+test('any invalid, duplicated or inconsistent key disables the entire creator list', () => {
   const first = Keypair.generate(), second = Keypair.generate();
   const corrupted = second.secretKey; corrupted[63] ^= 1;
-  const badValues = ['secret-sentinel-DO-NOT-ECHO', second.publicKey.toBase58(), bs58.encode(corrupted), bs58.encode(first.secretKey)];
+  const badValues = ['secret-sentinel-DO-NOT-ECHO', first.publicKey.toBase58(), bs58.encode(corrupted), bs58.encode(first.secretKey)];
   for (const bad of badValues) {
     const wallets = createCreatorWallets({ CREATOR_PRIVATE_KEY_1: bs58.encode(first.secretKey), CREATOR_PRIVATE_KEY_2: bad });
     const state = wallets.describe(); assert.equal(state.ready, false); assert.deepEqual(state.wallets, []);
@@ -35,4 +35,12 @@ test('empty placeholders are ignored, invalid numbering and labels fail closed',
   assert.equal(createCreatorWallets({ CREATOR_PRIVATE_KEY_1: '' }).describe().ready, false);
   for (const name of ['CREATOR_PRIVATE_KEY_0', 'CREATOR_PRIVATE_KEY_51', 'CREATOR_PRIVATE_KEY_01', 'CREATOR_PRIVATE_KEY_X']) assert.equal(createCreatorWallets({ [name]: key }).describe().ready, false);
   assert.equal(createCreatorWallets({ CREATOR_PRIVATE_KEY_1: key, CREATOR_LABEL_1: 'x'.repeat(41) }).describe().ready, false);
+});
+test('a plain public address is accepted as an address-only creator', () => {
+  const key = Keypair.generate(), address = key.publicKey.toBase58();
+  const wallets = createCreatorWallets({ CREATOR_PRIVATE_KEY_1: address, CREATOR_LABEL_1: 'Pump' });
+  const state = wallets.describe();
+  assert.equal(state.ready, true); assert.deepEqual(state.wallets, [{ address, label: 'Pump', number: 1 }]);
+  assert.equal(wallets.signAuthorization(address, 'x'), null);
+  wallets.close();
 });

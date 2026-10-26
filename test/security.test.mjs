@@ -80,7 +80,7 @@ test('an unconfigured creator cannot be used even with a valid client signature'
   assert.equal(prepares, 0);
 });
 test('missing or invalid Railway creator configuration fails closed without blocking login', async t => {
-  for (const value of ['', keys[2].publicKey.toBase58(), 'not-a-private-key']) {
+  for (const value of ['', 'not-a-private-key']) {
     const { base, post, login } = await serve(t, { CREATOR_PRIVATE_KEY_1: value });
     const headers = await login();
     assert.equal((await (await fetch(base + '/api/session', { headers })).json()).creators.ready, false);

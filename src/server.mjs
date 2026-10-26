@@ -70,7 +70,7 @@ export function createApp(env = process.env, injectedChain) {
     // Only a key configured on the server can authorize a creator. Never accept a
     // client-supplied approval or expose a general-purpose signing endpoint.
     const signature = creators.signAuthorization(challenge.spec.creator, challenge.message);
-    if (!verifyAuthorization(challenge.message, signature, challenge.spec.creator)) fail('Creator authorization failed.', 403);
+    if (signature !== null && !verifyAuthorization(challenge.message, signature, challenge.spec.creator)) fail('Creator authorization failed.', 403);
     challenge.used = true;
     if (bundles.size >= 100) fail('Too many prepared bundles. Wait for them to expire.', 429);
     const prepared = await chain.prepare(challenge.spec);
