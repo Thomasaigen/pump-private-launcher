@@ -1,0 +1,129 @@
+import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js';
+import nacl from 'tweetnacl';
+import { Buffer } from 'buffer';
+
+const $ = selector => document.querySelector(selector);
+const wallets = new Map();
+let session, prepared, mintKey, signed, signingTransactions, simulatedAt = 0, busy = false;
+const errorBox = $('#error');
+const el = (tag, text, className) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (className) n.className = className; return n; };
+async function api(url, body) {
+  const response = await fetch(url, { method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'launcher', ...(session ? { 'x-csrf-token': session.csrf } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const data = await response.json();
+  if (response.status === 401) { clearWallets(); location.replace('/login'); throw new Error('Session expired.'); }
+  if (!response.ok) { const e = new Error(data.error || 'Request failed.'); e.data = data; throw e; }
+  return data;
+}
+const sol = value => { const n = BigInt(value); return `${n / 1_000_000_000n}.${(n % 1_000_000_000n).toString().padStart(9, '0')}`.replace(/\.?0+$/, ''); };
+function invalidate() { prepared = null; mintKey = null; signed = null; signingTransactions = null; simulatedAt = 0; $('#review').hidden = true; $('#confirm').checked = false; $('#submit').disabled = true; }
+function clearWallets() { wallets.clear(); invalidate(); document.querySelectorAll('.wallet-address').forEach(n => n.textContent = 'No wallet selected'); document.querySelectorAll('input[type=file]').forEach(n => n.value = ''); }
+async function task(fn) {
+  if (busy) return; busy = true; errorBox.textContent = '';
+  const controls = [...document.querySelectorAll('button, input')].map(n => [n, n.disabled]); controls.forEach(([n]) => n.disabled = true);
+  try { await fn(); } catch (e) {
+    errorBox.textContent = e.message;
+    if (e.data?.signatures) { $('#details').hidden = false; $('#details').textContent = JSON.stringify(e.data, null, 2); }
+  } finally { busy = false; controls.forEach(([n, disabled]) => n.disabled = disabled); updateSubmit(); }
+}
+function updateSubmit() { $('#submit').disabled = busy || !prepared || !signed || !session?.launchEnabled || !$('#confirm').checked || Date.now() - simulatedAt > 30000 || Boolean(prepared.bundleId); }
+function walletRow(role, title, amount) {
+  const row = el('div', null, 'wallet-row'); const head = el('div', null, 'wallet-head'); head.append(el('b', title));
+  if (amount) { const label = el('label', 'Buy · SOL'); const input = el('input'); input.name = `${role}-amount`; input.value = amount; input.inputMode = 'decimal'; input.required = true; input.className = 'buy-input'; label.append(input); head.append(label); }
+  const addressNode = el('code', 'No wallet selected', 'wallet-address');
+  const buttons = el('div', null, 'wallet-buttons');
+  for (const [name, getProvider] of [['Phantom', () => window.phantom?.solana || window.solana], ['Solflare', () => window.solflare]]) {
+    const button = el('button', name, 'quiet'); button.type = 'button';
+    button.addEventListener('click', () => task(async () => {
+      const provider = getProvider(); if (!provider) throw new Error(`${name} is not available in this browser.`);
+      await provider.connect(); if (!provider.publicKey) throw new Error('Wallet connection was not approved.');
+      const address = provider.publicKey.toString(); wallets.set(role, { address, provider }); addressNode.textContent = address; invalidate();
+    })); buttons.append(button);
+  }
+  const fileLabel = el('label', 'Load keypair JSON', 'file-label'); const file = el('input'); file.type = 'file'; file.accept = '.json,application/json';
+  file.addEventListener('change', () => task(async () => {
+    const selected = file.files?.[0]; if (!selected) return;
+    if (selected.size > 2000) throw new Error('Select a Solana 64-byte keypair JSON file.');
+    let bytes; try { bytes = JSON.parse(await selected.text()); } catch { throw new Error('Invalid keypair JSON.'); }
+    if (!Array.isArray(bytes) || bytes.length !== 64 || bytes.some(v => !Number.isInteger(v) || v < 0 || v > 255)) throw new Error('Expected a JSON array of 64 bytes.');
+    const keypair = Keypair.fromSecretKey(Uint8Array.from(bytes)); bytes.fill(0); file.value = '';
+    wallets.set(role, { address: keypair.publicKey.toBase58(), keypair }); addressNode.textContent = keypair.publicKey.toBase58(); invalidate();
+  })); fileLabel.append(file); buttons.append(fileLabel); row.append(head, addressNode, buttons); return row;
+}
+for (const [role, title] of [['dev', 'Developer / launch wallet'], ['buyer1', 'Buyer 1'], ['buyer2', 'Buyer 2'], ['buyer3', 'Buyer 3']]) $('#wallet-rows').append(walletRow(role, title, '0.01'));
+$('#creator-row').append(walletRow('creator', 'Creator wallet'));
+$('#same-creator').addEventListener('change', () => { $('#creator-row').hidden = $('#same-creator').checked; invalidate(); });
+$('#launch-form').addEventListener('input', invalidate);
+$('#clear-wallets').addEventListener('click', clearWallets);
+$('#logout').addEventListener('click', () => task(async () => { clearWallets(); await api('/auth/logout', {}); location.replace('/login'); }));
+function requireWallet(role) { const w = wallets.get(role); if (!w) throw new Error(`Select the ${role} wallet.`); return w; }
+async function messageSignature(wallet, message) {
+  const bytes = new TextEncoder().encode(message);
+  if (wallet.keypair) return Buffer.from(nacl.sign.detached(bytes, wallet.keypair.secretKey)).toString('base64');
+  if (wallet.provider.publicKey?.toString() !== wallet.address) throw new Error(`Switch your wallet extension to ${wallet.address}, then try again.`);
+  const result = await wallet.provider.signMessage(bytes, 'utf8'); return Buffer.from(result.signature || result).toString('base64');
+}
+$('#launch-form').addEventListener('submit', event => { event.preventDefault(); const data = new FormData(event.currentTarget); task(async () => {
+  invalidate();
+  const dev = requireWallet('dev'), creator = $('#same-creator').checked ? dev : requireWallet('creator');
+  mintKey = Keypair.generate();
+  const spec = { name: data.get('name'), symbol: data.get('symbol'), uri: data.get('uri'), dev: dev.address, creator: creator.address, mint: mintKey.publicKey.toBase58(), devAmount: data.get('dev-amount'), buyers: [1, 2, 3].map(i => ({ address: requireWallet(`buyer${i}`).address, amount: data.get(`buyer${i}-amount`) })), tip: data.get('tip'), slippageBps: Math.round(Number(data.get('slippage')) * 100), priorityMicroLamports: Number(data.get('priority')) };
+  const authorization = await api('/api/authorize', spec);
+  const signature = await messageSignature(creator, authorization.message);
+  prepared = await api('/api/prepare', { id: authorization.id, signature }); renderReview();
+}); });
+function renderReview() {
+  const content = $('#review-content'); content.replaceChildren();
+  const meta = el('div', null, 'review-meta');
+  for (const [label, value] of [['Mint', prepared.mint], ['Creator', prepared.creator], ['Tip recipient', prepared.tipAccount]]) meta.append(el('span', label), el('code', value));
+  const wrap = el('div', null, 'table-wrap'), table = el('table'), head = el('tr');
+  for (const label of ['Transaction', 'Maximum buy · SOL', 'Tip · SOL', 'Network fee · SOL', 'Rent allowance · SOL']) head.append(el('th', label)); table.append(head);
+  for (const row of prepared.summary) { const tr = el('tr'); for (const value of [row.label, sol(row.maxBuyLamports), sol(row.tipLamports), sol(row.networkFeeLamports), sol(row.rentAllowanceLamports)]) tr.append(el('td', value)); table.append(tr); }
+  wrap.append(table); content.append(meta, wrap, el('p', 'Maximum buy includes slippage. Rent is a conservative allowance; complete bundle simulation validates actual execution. Wallets must be funded before preparing.', 'help'));
+  $('#review').hidden = false; $('#result').textContent = 'Prepared. No transactions submitted.'; $('#details').hidden = true; $('#status').hidden = true; $('#confirm').checked = false;
+  $('#review').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+async function signBundle() {
+  if (!signingTransactions) {
+    signingTransactions = prepared.transactions.map(wire => VersionedTransaction.deserialize(Buffer.from(wire, 'base64')));
+    signingTransactions[0].sign([mintKey]);
+  }
+  const transactions = signingTransactions;
+  for (let i = 0; i < transactions.length; i++) {
+    const w = requireWallet(i === 0 ? 'dev' : `buyer${i}`);
+    if (nacl.sign.detached.verify(transactions[i].message.serialize(), transactions[i].signatures[0], new PublicKey(w.address).toBytes())) continue;
+    if (w.keypair) transactions[i].sign([w.keypair]);
+    else {
+      if (w.provider.publicKey?.toString() !== w.address) throw new Error(`Switch your wallet extension to ${w.address}, then sign again. Using separate local keypair files avoids switching accounts.`);
+      const before = Buffer.from(transactions[i].message.serialize());
+      const result = await w.provider.signTransaction(transactions[i]);
+      if (!Buffer.from(result.message.serialize()).equals(before)) throw new Error('Wallet returned a modified transaction.');
+      transactions[i] = result;
+    }
+  }
+  return transactions.map(tx => Buffer.from(tx.serialize()).toString('base64'));
+}
+$('#sign-simulate').addEventListener('click', () => task(async () => {
+  if (!prepared) throw new Error('Prepare the bundle first.');
+  if (!session.simulationConfigured) throw new Error('Set BUNDLE_SIMULATION_RPC_URL in Railway before signing.');
+  signed = await signBundle(); const result = await api('/api/simulate', { id: prepared.id, transactions: signed }); simulatedAt = Date.now();
+  $('#result').textContent = 'All four signed transactions passed bundle simulation. Review the confirmation below; submit within 30 seconds.';
+  $('#details').hidden = false; $('#details').textContent = JSON.stringify(result, null, 2);
+}));
+$('#confirm').addEventListener('change', updateSubmit); setInterval(updateSubmit, 1000);
+$('#submit').addEventListener('click', () => task(async () => {
+  if (!$('#confirm').checked || !prepared || Date.now() - simulatedAt > 30000) throw new Error('Simulate and confirm the bundle first.');
+  const result = await api('/api/submit', { id: prepared.id, confirmMint: prepared.mint }); prepared.bundleId = result.bundleId;
+  $('#result').textContent = `Received by Jito: ${result.bundleId}. On-chain confirmation is pending.`;
+  $('#details').hidden = false; $('#details').textContent = JSON.stringify(result, null, 2); $('#status').hidden = false;
+}));
+$('#status').addEventListener('click', () => task(async () => {
+  const result = await api(`/api/status/${prepared.id}`); $('#details').hidden = false; $('#details').textContent = JSON.stringify(result, null, 2);
+  $('#result').textContent = result.confirmed ? 'All four transactions are confirmed on chain.' : 'Not yet confirmed. Inspect the returned bundle and transaction statuses.';
+}));
+task(async () => {
+  session = await api('/api/session');
+  $('#readiness').textContent = session.launchEnabled ? 'Mainnet submission enabled' : 'Preparation mode';
+  const missing = []; if (!session.rpcConfigured) missing.push('SOLANA_RPC_URL'); if (!session.simulationConfigured) missing.push('BUNDLE_SIMULATION_RPC_URL');
+  $('#notice').textContent = missing.length ? `Railway setup needed: ${missing.join(', ')}. Submission also requires ENABLE_LAUNCH=true and successful bundle simulation.` : session.launchEnabled ? 'Mainnet transactions use real SOL. Submission requires your explicit review and approval.' : 'Submission is disabled. You can prepare and simulate; enable it with ENABLE_LAUNCH=true in Railway when ready.';
+});
+window.addEventListener('pagehide', clearWallets);
