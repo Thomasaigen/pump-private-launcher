@@ -1,7 +1,9 @@
 import { randomBytes, createHash, scryptSync, timingSafeEqual } from 'node:crypto';
 
+export const passwordConfigured = value => typeof value === 'string' && value.length >= 5 && value.length <= 256;
+
 export function createAuth({ password = '', production = false, now = Date.now } = {}) {
-  const ready = password.length >= 12 && password.length <= 256;
+  const ready = passwordConfigured(password);
   const salt = randomBytes(32);
   const digest = ready ? scryptSync(password, salt, 32) : null;
   const sessions = new Map();
@@ -22,7 +24,7 @@ export function createAuth({ password = '', production = false, now = Date.now }
     ready, cookie,
     login(value, ip) {
       sweep();
-      if (!ready) return { status: 503, error: 'Set APP_PASSWORD to a unique password of 12–256 characters in Railway, then redeploy.' };
+      if (!ready) return { status: 503, error: 'Set APP_PASSWORD to a password of 5–256 characters in Railway, then redeploy.' };
       // Global and per-client budgets prevent forwarded-header rotation from defeating limits.
       for (const key of ['global', `ip:${ip}`]) {
         const a = attempts.get(key);

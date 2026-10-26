@@ -6,6 +6,7 @@ import bs58 from 'bs58';
 import { createAuth } from './auth.mjs';
 import { validateSpec, verifyAuthorization, verifySignedTransactions, fail } from './validation.mjs';
 import { createChain } from './chain.mjs';
+import { runDiagnostics } from './diagnostics.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export function createApp(env = process.env, injectedChain) {
@@ -49,6 +50,7 @@ export function createApp(env = process.env, injectedChain) {
   });
   app.post('/auth/logout', (req, res) => { auth.logout(req); res.set('Set-Cookie', auth.cookie('', 0)); res.json({ ok: true }); });
   app.get('/api/session', (req, res) => res.json({ csrf: req.session.csrf, expires: req.session.expires, launchEnabled: chain.enabled, rpcConfigured: chain.configured, simulationConfigured: chain.simulationConfigured }));
+  app.get('/api/readiness', (_req, res) => res.json(app.locals.readiness || { pending: true }));
   app.get('/', (_req, res) => res.sendFile(path.join(root, 'web/index.html')));
   app.get('/app.js', (_req, res) => res.sendFile(path.join(root, 'dist/app.js')));
   app.post('/api/authorize', (req, res) => {
@@ -117,4 +119,8 @@ export function createApp(env = process.env, injectedChain) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const app = createApp();
   app.listen(Number(process.env.PORT || 3000), '0.0.0.0', () => console.log('Private launcher listening.'));
+  runDiagnostics(process.env).then(report => {
+    app.locals.readiness = report;
+    console.log(JSON.stringify({ event: 'startup-diagnostics', ...report }));
+  }).catch(() => console.log('Startup diagnostics could not finish. No transactions were submitted.'));
 }

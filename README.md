@@ -8,7 +8,7 @@ Open the `launcher` service → **Variables**. Set:
 
 | Variable | Value / purpose |
 | --- | --- |
-| `APP_PASSWORD` | Your own unique password, 12–256 characters. Required for access. Never commit it. |
+| `APP_PASSWORD` | Your own unique password, 5–256 characters. Required for access. Never commit it. |
 | `SOLANA_RPC_URL` | An HTTPS Solana mainnet RPC endpoint. |
 | `BUNDLE_SIMULATION_RPC_URL` | An HTTPS RPC endpoint supporting Jito-Solana `simulateBundle`, such as QuickNode with the Lil' JIT add-on. A standard Solana endpoint alone is insufficient. |
 | `ENABLE_LAUNCH` | Initially `false`. Set to `true` when ready to submit reviewed, successfully simulated bundles. |
@@ -19,6 +19,8 @@ Open the `launcher` service → **Variables**. Set:
 Apply the variables and redeploy. If `APP_PASSWORD` is missing or too short, the login page remains available but **all app/API access stays locked**. There is no default password and no first-visitor setup flow. Changing the password and redeploying invalidates all sessions.
 
 Keep one replica. Sessions, creator-authorization challenges and pending bundles are memory-only. A restart logs you out and removes pending bundle tracking. Export/copy transaction signatures before leaving the page; on-chain transactions are unaffected by a restart. Successful login lasts one hour.
+
+Each startup runs read-only diagnostics for the configured mainnet RPC, Pump Global account, Jito tip accounts and `simulateBundle` availability. It logs only a sanitized status report, never passwords or provider URLs. The simulation probe uses an ephemeral unfunded payer and no transfer instructions; an expected insufficient-funds result verifies the method responds, **not** that a real launch will succeed. The report is also available at `/api/readiness` after login. No probe is submitted on chain.
 
 ## Using the app
 

@@ -58,7 +58,10 @@ export function createChain(env) {
   const rpcUrl = env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
   const jitoUrl = env.JITO_BLOCK_ENGINE_URL || 'https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles';
   const simulationUrl = env.BUNDLE_SIMULATION_RPC_URL;
-  for (const value of [rpcUrl, jitoUrl, simulationUrl].filter(Boolean)) { if (new URL(value).protocol !== 'https:') throw new Error('RPC endpoints must use HTTPS.'); }
+  for (const value of [rpcUrl, jitoUrl, simulationUrl].filter(Boolean)) {
+    let valid = false; try { valid = new URL(value).protocol === 'https:'; } catch { /* Never expose an endpoint in a URL parser error. */ }
+    if (!valid) throw new Error('RPC endpoints must be valid HTTPS URLs.');
+  }
   const connection = new Connection(rpcUrl, 'confirmed'); const sdk = new OnlinePumpSdk(connection);
   const jito = (method, params) => rpc(jitoUrl, method, params, env.JITO_AUTH_UUID ? { 'x-jito-auth': env.JITO_AUTH_UUID } : {});
   return {
