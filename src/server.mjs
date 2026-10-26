@@ -8,13 +8,15 @@ import { validateSpec, verifyAuthorization, verifySignedTransactions, fail } fro
 import { createChain } from './chain.mjs';
 import { runDiagnostics } from './diagnostics.mjs';
 import { createCreatorWallets } from './creator-wallets.mjs';
+import { createStorage, IMAGE_TYPES, MAX_IMAGE_BYTES } from './storage.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export function createApp(env = process.env, injectedChain) {
+export function createApp(env = process.env, injectedChain, injectedStorage) {
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', 1);
   const auth = createAuth({ password: env.APP_PASSWORD, production: env.NODE_ENV === 'production' });
   const chain = injectedChain || createChain(env);
   const creators = createCreatorWallets(env);
+  const storage = injectedStorage || createStorage(env);
   const challenges = new Map(), bundles = new Map();
   const now = Date.now;
   const cleanup = setInterval(() => { for (const map of [challenges, bundles]) for (const [id, row] of map) if (row.expires < now()) map.delete(id); }, 60000); cleanup.unref();
@@ -51,10 +53,19 @@ export function createApp(env = process.env, injectedChain) {
     next();
   });
   app.post('/auth/logout', (req, res) => { auth.logout(req); res.set('Set-Cookie', auth.cookie('', 0)); res.json({ ok: true }); });
-  app.get('/api/session', (req, res) => res.json({ csrf: req.session.csrf, expires: req.session.expires, launchEnabled: chain.enabled, rpcConfigured: chain.configured, simulationConfigured: chain.simulationConfigured, creators: creators.describe() }));
+  app.get('/api/session', (req, res) => res.json({ csrf: req.session.csrf, expires: req.session.expires, launchEnabled: chain.enabled, rpcConfigured: chain.configured, simulationConfigured: chain.simulationConfigured, creators: creators.describe(), uploadsConfigured: storage.configured }));
   app.get('/api/readiness', (_req, res) => res.json({ ...(app.locals.readiness || { pending: true }), creators: creators.describe() }));
   app.get('/', (_req, res) => res.sendFile(path.join(root, 'web/index.html')));
   app.get('/app.js', (_req, res) => res.sendFile(path.join(root, 'dist/app.js')));
+  app.post('/api/upload-metadata', express.raw({ type: IMAGE_TYPES, limit: MAX_IMAGE_BYTES }), async (req, res) => {
+    const text = (v, max, label, optional) => {
+      const value = typeof v === 'string' ? v.trim() : '';
+      if ((!value && !optional) || Buffer.byteLength(value) > max || /[\u0000-\u001f]/.test(value)) fail(`Invalid ${label}.`);
+      return value;
+    };
+    const name = text(req.query.name, 32, 'name'), symbol = text(req.query.symbol, 10, 'symbol'), description = text(req.query.description, 500, 'description', true);
+    res.json(await storage.uploadToken({ image: Buffer.isBuffer(req.body) ? req.body : null, contentType: req.get('content-type')?.split(';')[0], name, symbol, description }));
+  });
   app.post('/api/authorize', (req, res) => {
     const spec = validateSpec(req.body);
     creators.requireWallet(spec.creator);

@@ -78,7 +78,18 @@ $('#launch-form').addEventListener('submit', event => { event.preventDefault(); 
   const dev = requireWallet('dev'), creator = session.creators.wallets.find(w => w.address === data.get('creator'));
   if (!session.creators.ready || !creator) throw new Error('Select a creator wallet configured in Railway.');
   mintKey = Keypair.generate();
-  const spec = { name: data.get('name'), symbol: data.get('symbol'), uri: data.get('uri'), dev: dev.address, creator: creator.address, mint: mintKey.publicKey.toBase58(), devAmount: data.get('dev-amount'), buyers: [1, 2, 3].map(i => ({ address: requireWallet(`buyer${i}`).address, amount: data.get(`buyer${i}-amount`) })), tip: data.get('tip'), slippageBps: Math.round(Number(data.get('slippage')) * 100), priorityMicroLamports: Number(data.get('priority')) };
+  const image = data.get('image'); let uri = String(data.get('uri') || '').trim();
+  if (image && image.size) {
+    if (image.size > 5 * 1024 * 1024) throw new Error('Image must be 5 MB or smaller.');
+    const query = new URLSearchParams({ name: data.get('name'), symbol: data.get('symbol'), description: data.get('description') || '' });
+    const response = await fetch(`/api/upload-metadata?${query}`, { method: 'POST', headers: { 'content-type': image.type, 'x-requested-with': 'launcher', 'x-csrf-token': session.csrf }, body: image });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401) { clearWallets(); location.replace('/login'); throw new Error('Session expired.'); }
+    if (!response.ok) throw new Error(result.error || 'Image upload failed.');
+    uri = result.uri;
+  }
+  if (!uri) throw new Error('Choose a token image or paste a metadata URI.');
+  const spec = { name: data.get('name'), symbol: data.get('symbol'), uri, dev: dev.address, creator: creator.address, mint: mintKey.publicKey.toBase58(), devAmount: data.get('dev-amount'), buyers: [1, 2, 3].map(i => ({ address: requireWallet(`buyer${i}`).address, amount: data.get(`buyer${i}-amount`) })), tip: data.get('tip'), slippageBps: Math.round(Number(data.get('slippage')) * 100), priorityMicroLamports: Number(data.get('priority')) };
   const authorization = await api('/api/authorize', spec);
   prepared = await api('/api/prepare', { id: authorization.id }); renderReview();
 }); });
