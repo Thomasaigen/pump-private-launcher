@@ -1,6 +1,7 @@
 import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
+import { parsePrivateKey } from './wallet-import.mjs';
 
 const $ = selector => document.querySelector(selector);
 const wallets = new Map();
@@ -16,7 +17,7 @@ async function api(url, body) {
 }
 const sol = value => { const n = BigInt(value); return `${n / 1_000_000_000n}.${(n % 1_000_000_000n).toString().padStart(9, '0')}`.replace(/\.?0+$/, ''); };
 function invalidate() { prepared = null; mintKey = null; signed = null; signingTransactions = null; simulatedAt = 0; $('#review').hidden = true; $('#confirm').checked = false; $('#submit').disabled = true; }
-function clearWallets() { wallets.clear(); invalidate(); document.querySelectorAll('.wallet-address').forEach(n => n.textContent = 'No wallet selected'); document.querySelectorAll('input[type=file]').forEach(n => n.value = ''); }
+function clearWallets() { wallets.clear(); invalidate(); document.querySelectorAll('.wallet-address').forEach(n => n.textContent = 'No wallet selected'); document.querySelectorAll('input[type=file], .private-key-input').forEach(n => n.value = ''); }
 async function task(fn) {
   if (busy) return; busy = true; errorBox.textContent = '';
   const controls = [...document.querySelectorAll('button, input')].map(n => [n, n.disabled]); controls.forEach(([n]) => n.disabled = true);
@@ -30,6 +31,24 @@ function walletRow(role, title, amount) {
   const row = el('div', null, 'wallet-row'); const head = el('div', null, 'wallet-head'); head.append(el('b', title));
   if (amount) { const label = el('label', 'Buy · SOL'); const input = el('input'); input.name = `${role}-amount`; input.value = amount; input.inputMode = 'decimal'; input.required = true; input.className = 'buy-input'; label.append(input); head.append(label); }
   const addressNode = el('code', 'No wallet selected', 'wallet-address');
+  const useLocalKey = keypair => {
+    wallets.set(role, { address: keypair.publicKey.toBase58(), keypair });
+    addressNode.textContent = keypair.publicKey.toBase58(); invalidate();
+  };
+  const importArea = el('div', null, 'private-key-area');
+  const keyLabel = el('label', `${title} private key`); keyLabel.htmlFor = `${role}-private-key`;
+  const keyControls = el('div', null, 'private-key-controls');
+  const keyInput = el('input'); keyInput.type = 'password'; keyInput.id = `${role}-private-key`; keyInput.className = 'private-key-input';
+  keyInput.placeholder = 'Paste private key'; keyInput.autocomplete = 'off'; keyInput.spellcheck = false; keyInput.maxLength = 2000;
+  keyInput.setAttribute('autocapitalize', 'none');
+  // No name attribute: private keys are excluded from the launch form's FormData.
+  const importButton = el('button', 'Use wallet', 'quiet'); importButton.type = 'button';
+  importButton.addEventListener('click', () => task(async () => {
+    try { useLocalKey(parsePrivateKey(keyInput.value)); }
+    finally { keyInput.value = ''; }
+  }));
+  keyInput.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); importButton.click(); } });
+  keyControls.append(keyInput, importButton); importArea.append(keyLabel, keyControls);
   const buttons = el('div', null, 'wallet-buttons');
   for (const [name, getProvider] of [['Phantom', () => window.phantom?.solana || window.solana], ['Solflare', () => window.solflare]]) {
     const button = el('button', name, 'quiet'); button.type = 'button';
@@ -43,14 +62,12 @@ function walletRow(role, title, amount) {
   file.addEventListener('change', () => task(async () => {
     const selected = file.files?.[0]; if (!selected) return;
     if (selected.size > 2000) throw new Error('Select a Solana 64-byte keypair JSON file.');
-    let bytes; try { bytes = JSON.parse(await selected.text()); } catch { throw new Error('Invalid keypair JSON.'); }
-    if (!Array.isArray(bytes) || bytes.length !== 64 || bytes.some(v => !Number.isInteger(v) || v < 0 || v > 255)) throw new Error('Expected a JSON array of 64 bytes.');
-    const keypair = Keypair.fromSecretKey(Uint8Array.from(bytes)); bytes.fill(0); file.value = '';
-    wallets.set(role, { address: keypair.publicKey.toBase58(), keypair }); addressNode.textContent = keypair.publicKey.toBase58(); invalidate();
-  })); fileLabel.append(file); buttons.append(fileLabel); row.append(head, addressNode, buttons); return row;
+    try { useLocalKey(parsePrivateKey(await selected.text())); }
+    finally { file.value = ''; }
+  })); fileLabel.append(file); buttons.append(fileLabel); row.append(head, addressNode, importArea, buttons); return row;
 }
 for (const [role, title] of [['dev', 'Developer / launch wallet'], ['buyer1', 'Buyer 1'], ['buyer2', 'Buyer 2'], ['buyer3', 'Buyer 3']]) $('#wallet-rows').append(walletRow(role, title, '0.01'));
-$('#creator-row').append(walletRow('creator', 'Creator wallet'));
+$('#creator-row').append(walletRow('creator', 'Separate authorized creator wallet'));
 $('#same-creator').addEventListener('change', () => { $('#creator-row').hidden = $('#same-creator').checked; invalidate(); });
 $('#launch-form').addEventListener('input', invalidate);
 $('#clear-wallets').addEventListener('click', clearWallets);
