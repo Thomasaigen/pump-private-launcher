@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Attribution Research</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<header><a class="brand" href="/">P<span>/</span> ATTRIBUTION RESEARCH</a><div class="header-actions"><span class="badge">SIMULATION · V2</span><button id="logout" class="quiet" type="button">Lock workspace</button></div></header>
+<main class="workspace">
+<section class="intro"><p class="eyebrow">PRIVATE RESEARCH WORKSPACE</p><h1>See what the history counts.</h1><p class="muted">Compare original token launches with migrations and stored deployer attribution.</p></section>
+<div class="notice"><strong>Simulated data.</strong> This model illustrates the observed field mismatch. It does not connect to Solana or establish Axiom’s private indexing rules.</div>
+<section class="controls" aria-label="Research controls">
+<label for="scenario">Sample snapshot<select id="scenario"><option value="earlier">Earlier · four tokens</option><option value="later">Later · six tokens</option></select></label>
+<label for="selected-wallet">Inspect wallet<select id="selected-wallet"></select></label>
+</section>
+<section id="results" class="stats" aria-live="polite" aria-label="Attribution comparison">
+<div class="stat"><p>Actual launches</p><strong id="actual-launches">—</strong><span id="actual-migrated">Loading sample…</span></div>
+<div class="stat"><p>Migrations initiated</p><strong id="migrations">—</strong><span>Includes tokens launched by other sample wallets</span></div>
+<div class="stat featured"><p>Stored-deployer grouping</p><strong id="attributed">—</strong><span id="attributed-note">Illustrative migration ratio</span></div>
+</section>
+<p id="finding" class="finding" role="status"></p>
+<section class="panel"><div class="section-heading"><h2>Follow each identity</h2><span id="record-count" class="muted"></span></div><div class="table-wrap" role="region" aria-label="Token identity comparison" tabindex="0"><table><thead><tr><th>Sample token</th><th>Launched by</th><th>Migrated by</th><th>Stored deployer</th><th>Displayed developer</th><th>Selected wallet’s role</th></tr></thead><tbody id="records"></tbody></table></div><p class="help">“Displayed developer” prefers the original Pump deployer when present. The stored deployer can be a different wallet.</p></section>
+<details class="panel wallet-settings"><summary>Label the sample wallets with your own addresses</summary><p class="help">Optional public addresses and labels only. They stay in this tab and do not load real wallet history or prove ownership.</p><form id="wallet-form"><div id="wallet-fields"></div><div class="actions"><button type="submit">Apply labels</button><button id="reset-labels" type="button" class="quiet">Reset labels</button></div></form><p id="wallet-status" role="status"></p></details>
+<details class="panel"><summary>What this test verifies</summary><p>The model keeps the original launch wallet separate from the migration signer and the stored deployer. The earlier sample contains one launch and three migrations by the selected wallet; the later sample adds two launches.</p><p>The figures are calculated from fixtures bundled with this app. They are not live balances, token statistics, or a test of current Pump program execution.</p></details>
+<p id="error" role="alert"></p>
+</main><footer>Password-protected workspace · Public labels only · No transaction submission</footer>
+<script type="module" src="/research.js"></script>
+</body></html>
