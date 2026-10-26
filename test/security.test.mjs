@@ -123,3 +123,19 @@ test('altered, unsigned and partially signed messages are rejected before relay'
   tx.sign([payer]); assert.equal(verifySignedTransactions([unsigned], [encode(tx)]).length, 1);
   const changed = make(1000000); changed.sign([payer]); assert.throws(() => verifySignedTransactions([unsigned], [encode(changed)]), /contents changed/);
 });
+test('image upload route requires login and uses the storage provider', async t => {
+  const storage = { configured: true, async uploadToken(a) { assert.equal(a.name, 'Tok'); assert.ok(a.image.length > 0); return { uri: 'https://ipfs.io/ipfs/QmX', image: 'https://ipfs.io/ipfs/QmY' }; } };
+  const app = createApp({ APP_PASSWORD: password, CREATOR_PRIVATE_KEY_1: bs58.encode(keys[2].secretKey) }, fakeChain, storage);
+  const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
+  t.after(async () => { app.locals.close(); await new Promise(r => server.close(r)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const send = (headers = {}) => fetch(`${base}/api/upload-metadata?name=Tok&symbol=TK`, { method: 'POST', headers: { origin: base, 'x-requested-with': 'launcher', 'content-type': 'image/png', ...headers }, body: Buffer.from([1, 2, 3]) });
+  assert.equal((await send()).status, 401);
+  const r = await fetch(base + '/auth/login', { method: 'POST', headers: { origin: base, 'x-requested-with': 'launcher', 'content-type': 'application/json' }, body: JSON.stringify({ password }) });
+  const cookie = r.headers.get('set-cookie').split(';')[0];
+  const session = await (await fetch(base + '/api/session', { headers: { cookie } })).json();
+  assert.equal(session.uploadsConfigured, true);
+  assert.equal((await send({ cookie })).status, 403);
+  const ok = await send({ cookie, 'x-csrf-token': session.csrf });
+  assert.equal(ok.status, 200); assert.equal((await ok.json()).uri, 'https://ipfs.io/ipfs/QmX');
+});

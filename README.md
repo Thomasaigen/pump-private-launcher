@@ -12,6 +12,7 @@ Open the `launcher` service → **Variables**. Set:
 | `CREATOR_PRIVATE_KEY_1` | Server-only private key for your first creator wallet: base58 or a 64-byte Solana keypair JSON array. A plain public wallet address is also accepted; the creator is then recorded without a server-side signature check. |
 | `CREATOR_LABEL_1` | Optional display label, up to 40 characters. Repeat the matching private-key and label variables with suffixes `_2` through `_50` for more creator wallets. |
 | `SOLANA_RPC_URL` | An HTTPS Solana mainnet RPC endpoint. |
+| `PINATA_JWT` | Required to launch. Pinata JWT used to upload the token image and metadata to IPFS from the page.. `IPFS_GATEWAY_URL` overrides the default `https://ipfs.io/ipfs/`. |
 | `BUNDLE_SIMULATION_RPC_URL` | An HTTPS RPC endpoint supporting Jito-Solana `simulateBundle`, such as QuickNode with the Lil' JIT add-on. A standard Solana endpoint alone is insufficient. |
 | `ENABLE_LAUNCH` | Initially `false`. Set to `true` when ready to submit reviewed, successfully simulated bundles. |
 | `JITO_BLOCK_ENGINE_URL` | Defaults to `https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles`. |
