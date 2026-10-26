@@ -16,6 +16,7 @@ async function api(url, body) {
   return data;
 }
 const sol = value => { const n = BigInt(value); return `${n / 1_000_000_000n}.${(n % 1_000_000_000n).toString().padStart(9, '0')}`.replace(/\.?0+$/, ''); };
+let preparedRoles = ['dev'];
 function invalidate() { prepared = null; mintKey = null; signed = null; signingTransactions = null; simulatedAt = 0; $('#review').hidden = true; $('#confirm').checked = false; $('#submit').disabled = true; }
 function clearWallets() { wallets.clear(); invalidate(); document.querySelectorAll('.wallet-address').forEach(n => n.textContent = 'No wallet selected'); document.querySelectorAll('input[type=file], .private-key-input').forEach(n => n.value = ''); $('#creator-select').value = ''; $('#creator-address').textContent = 'No creator selected'; }
 async function task(fn) {
@@ -28,9 +29,14 @@ async function task(fn) {
 }
 function updateCreatorControls() { $('#creator-select').disabled = busy || !session?.creators?.ready; $('#prepare').disabled = busy || !session?.creators?.ready; }
 function updateSubmit() { $('#submit').disabled = busy || !prepared || !signed || !session?.launchEnabled || !$('#confirm').checked || Date.now() - simulatedAt > 30000 || Boolean(prepared.bundleId); }
-function walletRow(role, title, amount) {
+function walletRow(role, title, amount, optional) {
   const row = el('div', null, 'wallet-row'); const head = el('div', null, 'wallet-head'); head.append(el('b', title));
   if (amount) { const label = el('label', 'Buy · SOL'); const input = el('input'); input.name = `${role}-amount`; input.value = amount; input.inputMode = 'decimal'; input.required = true; input.className = 'buy-input'; label.append(input); head.append(label); }
+  if (optional) {
+    const toggle = el('label', null, 'wallet-toggle'); const box = el('input'); box.type = 'checkbox'; box.checked = true; box.className = 'wallet-enabled'; box.dataset.role = role;
+    box.addEventListener('change', () => { row.classList.toggle('off', !box.checked); row.querySelectorAll('input:not(.wallet-enabled), button').forEach(n => { n.disabled = !box.checked; }); invalidate(); });
+    toggle.append(box, document.createTextNode(' Use')); head.prepend(toggle);
+  }
   const addressNode = el('code', 'No wallet selected', 'wallet-address');
   const useLocalKey = keypair => {
     wallets.set(role, { address: keypair.publicKey.toBase58(), keypair });
@@ -67,7 +73,7 @@ function walletRow(role, title, amount) {
     finally { file.value = ''; }
   })); fileLabel.append(file); buttons.append(fileLabel); row.append(head, addressNode, importArea, buttons); return row;
 }
-for (const [role, title] of [['dev', 'Developer / launch wallet'], ['buyer1', 'Buyer 1'], ['buyer2', 'Buyer 2'], ['buyer3', 'Buyer 3']]) $('#wallet-rows').append(walletRow(role, title, '0.01'));
+for (const [role, title] of [['dev', 'Developer / launch wallet'], ['buyer1', 'Buyer 1'], ['buyer2', 'Buyer 2'], ['buyer3', 'Buyer 3']]) $('#wallet-rows').append(walletRow(role, title, '0.01', role !== 'dev'));
 $('#creator-select').addEventListener('change', () => { $('#creator-address').textContent = $('#creator-select').value || 'No creator selected'; invalidate(); });
 $('#launch-form').addEventListener('input', invalidate);
 $('#clear-wallets').addEventListener('click', clearWallets);
@@ -78,6 +84,8 @@ $('#launch-form').addEventListener('submit', event => { event.preventDefault(); 
   const dev = requireWallet('dev'), creator = session.creators.wallets.find(w => w.address === data.get('creator'));
   if (!session.creators.ready || !creator) throw new Error('Select a creator wallet configured in Railway.');
   mintKey = Keypair.generate();
+  const activeBuyers = [1, 2, 3].filter(i => document.querySelector(`.wallet-enabled[data-role=buyer${i}]`).checked);
+  if (!activeBuyers.length) throw new Error('Keep at least one buyer wallet switched on. The Jito tip is paid by the last buyer.');
   const image = data.get('image'); let uri;
   if (!image || !image.size) throw new Error('Upload a token image from your computer.');
   {
@@ -89,9 +97,9 @@ $('#launch-form').addEventListener('submit', event => { event.preventDefault(); 
     if (!response.ok) throw new Error(result.error || 'Image upload failed.');
     uri = result.uri;
   }
-  const spec = { name: data.get('name'), symbol: data.get('symbol'), uri, dev: dev.address, creator: creator.address, mint: mintKey.publicKey.toBase58(), devAmount: data.get('dev-amount'), buyers: [1, 2, 3].map(i => ({ address: requireWallet(`buyer${i}`).address, amount: data.get(`buyer${i}-amount`) })), tip: data.get('tip'), slippageBps: Math.round(Number(data.get('slippage')) * 100), priorityMicroLamports: Number(data.get('priority')) };
+  const spec = { name: data.get('name'), symbol: data.get('symbol'), uri, dev: dev.address, creator: creator.address, mint: mintKey.publicKey.toBase58(), devAmount: data.get('dev-amount'), buyers: activeBuyers.map(i => ({ address: requireWallet(`buyer${i}`).address, amount: data.get(`buyer${i}-amount`) })), tip: data.get('tip'), slippageBps: Math.round(Number(data.get('slippage')) * 100), priorityMicroLamports: Number(data.get('priority')) };
   const authorization = await api('/api/authorize', spec);
-  prepared = await api('/api/prepare', { id: authorization.id }); renderReview();
+  prepared = await api('/api/prepare', { id: authorization.id }); preparedRoles = ['dev', ...activeBuyers.map(i => `buyer${i}`)]; renderReview();
 }); });
 function renderReview() {
   const content = $('#review-content'); content.replaceChildren();
@@ -111,7 +119,7 @@ async function signBundle() {
   }
   const transactions = signingTransactions;
   for (let i = 0; i < transactions.length; i++) {
-    const w = requireWallet(i === 0 ? 'dev' : `buyer${i}`);
+    const w = requireWallet(preparedRoles[i]);
     if (nacl.sign.detached.verify(transactions[i].message.serialize(), transactions[i].signatures[0], new PublicKey(w.address).toBytes())) continue;
     if (w.keypair) transactions[i].sign([w.keypair]);
     else {

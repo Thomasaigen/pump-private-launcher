@@ -35,3 +35,14 @@ test('only complete successful bundle simulation unlocks submission', () => {
   assert.equal(simulationSucceeded(good, 4), false);
   assert.equal(simulationSucceeded({ value: { err: null } }, 4), false);
 });
+test('with fewer buyers the tip is paid in the last transaction', async () => {
+  const keys = Array.from({ length: 6 }, () => Keypair.generate());
+  const fixture = JSON.parse(fs.readFileSync(new URL('./global-fixture.json', import.meta.url)));
+  const global = PUMP_SDK.decodeGlobal({ data: Buffer.from(fixture.base64, 'base64'), executable: false, lamports: 0, owner: PUMP_PROGRAM_ID });
+  for (const count of [1, 2]) {
+    const spec = validateSpec({ name: 'Authorized launch', symbol: 'AUTH', uri: 'https://ipfs.io/ipfs/QmRu5YpS3YTVFu6ArXVbeeRcAHjnKS4Ry9opcRGmTT5REt', mint: keys[0].publicKey.toBase58(), dev: keys[1].publicKey.toBase58(), creator: keys[2].publicKey.toBase58(), devAmount: '0.01', buyers: [3, 4, 5].slice(0, count).map(i => ({ address: keys[i].publicKey.toBase58(), amount: '0.01' })), tip: '0.001' });
+    const result = await buildTransactions(spec, { global, feeConfig: null, blockhash: PublicKey.default.toBase58(), lastValidBlockHeight: 100, tipAccount: Keypair.generate().publicKey.toBase58() });
+    assert.equal(result.transactions.length, count + 1);
+    assert.deepEqual(result.summary.map(r => r.tipLamports !== '0'), result.summary.map((_, i) => i === count));
+  }
+});
