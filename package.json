@@ -1,6 +1,6 @@
 {
   "name": "pump-private-launcher",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "start": "node src/research-server.mjs",
+    "start": "node src/test-launch-server.mjs",
     "pretest": "npm run build",
     "test": "node --test test/*.test.mjs"
   },

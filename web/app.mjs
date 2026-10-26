@@ -2,6 +2,8 @@ import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
 import { parsePrivateKey } from './wallet-import.mjs';
+import { compareAxiomRecord } from './axiom-comparison.mjs';
+import { lamports } from '../src/validation.mjs';
 
 const $ = selector => document.querySelector(selector);
 const wallets = new Map();
@@ -17,7 +19,7 @@ async function api(url, body) {
 }
 const sol = value => { const n = BigInt(value); return `${n / 1_000_000_000n}.${(n % 1_000_000_000n).toString().padStart(9, '0')}`.replace(/\.?0+$/, ''); };
 let preparedRoles = ['dev'];
-function invalidate() { prepared = null; mintKey = null; signed = null; signingTransactions = null; simulatedAt = 0; $('#review').hidden = true; $('#confirm').checked = false; $('#submit').disabled = true; }
+function invalidate() { prepared = null; mintKey = null; signed = null; signingTransactions = null; simulatedAt = 0; $('#review').hidden = true; $('#confirm').checked = false; $('#submit').disabled = true; $('#evidence').hidden = true; $('#axiom-result').textContent = ''; }
 function clearWallets() { wallets.clear(); invalidate(); document.querySelectorAll('.wallet-address').forEach(n => n.textContent = 'No wallet selected'); document.querySelectorAll('input[type=file], .private-key-input').forEach(n => n.value = ''); $('#creator-select').value = ''; $('#creator-address').textContent = 'No creator selected'; }
 async function task(fn) {
   if (busy) return; busy = true; errorBox.textContent = '';
@@ -28,7 +30,7 @@ async function task(fn) {
   } finally { busy = false; controls.forEach(([n, disabled]) => n.disabled = disabled); updateCreatorControls(); updateSubmit(); }
 }
 function updateCreatorControls() { $('#creator-select').disabled = busy || !session?.creators?.ready; $('#prepare').disabled = busy || !session?.creators?.ready; }
-function updateSubmit() { $('#submit').disabled = busy || !prepared || !signed || !session?.launchEnabled || !$('#confirm').checked || Date.now() - simulatedAt > 30000 || Boolean(prepared.bundleId); }
+function updateSubmit() { $('#submit').disabled = busy || !prepared || !signed || !session?.launchEnabled || !$('#confirm').checked || Date.now() - simulatedAt > 30000 || Boolean(prepared.submissionAttempted); }
 function walletRow(role, title, amount, optional) {
   const row = el('div', null, 'wallet-row'); const head = el('div', null, 'wallet-head'); head.append(el('b', title));
   if (amount) { const label = el('label', 'Buy · SOL'); const input = el('input'); input.name = `${role}-amount`; input.value = amount; input.inputMode = 'decimal'; input.required = true; input.className = 'buy-input'; label.append(input); head.append(label); }
@@ -86,25 +88,30 @@ $('#launch-form').addEventListener('submit', event => { event.preventDefault(); 
   mintKey = Keypair.generate();
   const activeBuyers = [1, 2, 3].filter(i => document.querySelector(`.wallet-enabled[data-role=buyer${i}]`).checked);
   if (!activeBuyers.length) throw new Error('Keep at least one buyer wallet switched on. The Jito tip is paid by the last buyer.');
+  const name = '[TEST] ' + String(data.get('name') || '').trim();
+  const symbol = String(data.get('symbol') || '').trim();
+  const expectedBuys = [data.get('dev-amount'), ...activeBuyers.map(i => data.get(`buyer${i}-amount`))].map((amount, i) => BigInt(lamports(amount, i === 0 ? 'Developer amount' : 'Buyer amount', i === 0 ? 0n : 1n)));
+  if (expectedBuys.reduce((a, b) => a + b, 0n) > 250_000_000n) throw new Error('Use at most 0.25 SOL total initial buys for this research launch.');
+  for (const i of activeBuyers) requireWallet(`buyer${i}`);
   const image = data.get('image'); let uri;
   if (!image || !image.size) throw new Error('Upload a token image from your computer.');
   {
     if (image.size > 5 * 1024 * 1024) throw new Error('Image must be 5 MB or smaller.');
-    const query = new URLSearchParams({ name: data.get('name'), symbol: data.get('symbol'), description: data.get('description') || '' });
+    const query = new URLSearchParams({ name, symbol, description: data.get('description') || '', launcher: dev.address, creator: creator.address });
     const response = await fetch(`/api/upload-metadata?${query}`, { method: 'POST', headers: { 'content-type': image.type, 'x-requested-with': 'launcher', 'x-csrf-token': session.csrf }, body: image });
     const result = await response.json().catch(() => ({}));
     if (response.status === 401) { clearWallets(); location.replace('/login'); throw new Error('Session expired.'); }
     if (!response.ok) throw new Error(result.error || 'Image upload failed.');
     uri = result.uri;
   }
-  const spec = { name: data.get('name'), symbol: data.get('symbol'), uri, dev: dev.address, creator: creator.address, mint: mintKey.publicKey.toBase58(), devAmount: data.get('dev-amount'), buyers: activeBuyers.map(i => ({ address: requireWallet(`buyer${i}`).address, amount: data.get(`buyer${i}-amount`) })), tip: data.get('tip'), slippageBps: Math.round(Number(data.get('slippage')) * 100), priorityMicroLamports: Number(data.get('priority')) };
+  const spec = { name, symbol, uri, dev: dev.address, creator: creator.address, mint: mintKey.publicKey.toBase58(), devAmount: data.get('dev-amount'), buyers: activeBuyers.map(i => ({ address: requireWallet(`buyer${i}`).address, amount: data.get(`buyer${i}-amount`) })), tip: data.get('tip'), slippageBps: Math.round(Number(data.get('slippage')) * 100), priorityMicroLamports: Number(data.get('priority')) };
   const authorization = await api('/api/authorize', spec);
   prepared = await api('/api/prepare', { id: authorization.id }); preparedRoles = ['dev', ...activeBuyers.map(i => `buyer${i}`)]; renderReview();
 }); });
 function renderReview() {
   const content = $('#review-content'); content.replaceChildren();
   const meta = el('div', null, 'review-meta');
-  for (const [label, value] of [['Mint', prepared.mint], ['Creator', prepared.creator], ['Tip recipient', prepared.tipAccount]]) meta.append(el('span', label), el('code', value));
+  for (const [label, value] of [['Mint', prepared.mint], ['Launch signer', prepared.launcher], ['Creator fee wallet', prepared.creator], ['Tip recipient', prepared.tipAccount]]) meta.append(el('span', label), el('code', value));
   const wrap = el('div', null, 'table-wrap'), table = el('table'), head = el('tr');
   for (const label of ['Transaction', 'Maximum buy · SOL', 'Tip · SOL', 'Network fee · SOL', 'Rent allowance · SOL']) head.append(el('th', label)); table.append(head);
   for (const row of prepared.summary) { const tr = el('tr'); for (const value of [row.label, sol(row.maxBuyLamports), sol(row.tipLamports), sol(row.networkFeeLamports), sol(row.rentAllowanceLamports)]) tr.append(el('td', value)); table.append(tr); }
@@ -136,19 +143,24 @@ $('#sign-simulate').addEventListener('click', () => task(async () => {
   if (!prepared) throw new Error('Prepare the bundle first.');
   if (!session.simulationConfigured) throw new Error('Set BUNDLE_SIMULATION_RPC_URL in Railway before signing.');
   signed = await signBundle(); const result = await api('/api/simulate', { id: prepared.id, transactions: signed }); simulatedAt = Date.now();
-  $('#result').textContent = 'All four signed transactions passed bundle simulation. Review the confirmation below; submit within 30 seconds.';
+  $('#result').textContent = `All ${prepared.transactions.length} signed transactions passed simulation. Nothing has launched yet, and Axiom cannot index this simulation. Review and submit within 30 seconds to perform the real launch.`;
   $('#details').hidden = false; $('#details').textContent = JSON.stringify(result, null, 2);
 }));
 $('#confirm').addEventListener('change', updateSubmit); setInterval(updateSubmit, 1000);
 $('#submit').addEventListener('click', () => task(async () => {
   if (!$('#confirm').checked || !prepared || Date.now() - simulatedAt > 30000) throw new Error('Simulate and confirm the bundle first.');
+  prepared.submissionAttempted = true;
   const result = await api('/api/submit', { id: prepared.id, confirmMint: prepared.mint }); prepared.bundleId = result.bundleId;
+  prepared.signatures = result.signatures;
   $('#result').textContent = `Received by Jito: ${result.bundleId}. On-chain confirmation is pending.`;
   $('#details').hidden = false; $('#details').textContent = JSON.stringify(result, null, 2); $('#status').hidden = false;
+  showEvidence();
 }));
 $('#status').addEventListener('click', () => task(async () => {
   const result = await api(`/api/status/${prepared.id}`); $('#details').hidden = false; $('#details').textContent = JSON.stringify(result, null, 2);
-  $('#result').textContent = result.confirmed ? 'All four transactions are confirmed on chain.' : 'Not yet confirmed. Inspect the returned bundle and transaction statuses.';
+  prepared.confirmed = result.confirmed;
+  $('#result').textContent = result.confirmed ? `All ${prepared.transactions.length} transactions are confirmed on chain. You can now check whether Axiom has indexed the mint.` : 'Not yet confirmed. Inspect the returned bundle and transaction statuses.';
+  showEvidence();
 }));
 task(async () => {
   session = await api('/api/session');
@@ -156,9 +168,27 @@ task(async () => {
   for (const wallet of session.creators.wallets) { const option = el('option', `${wallet.label} · ${wallet.address.slice(0, 6)}…${wallet.address.slice(-6)}`); option.value = wallet.address; creatorSelect.append(option); }
   $('#creator-configuration').textContent = session.creators.ready ? `${session.creators.wallets.length} configured creator wallet${session.creators.wallets.length === 1 ? '' : 's'} available. Select one and verify its full address below.` : session.creators.error;
   $('#readiness').textContent = !session.creators.ready ? 'Creator setup needed' : session.launchEnabled ? 'Mainnet submission enabled' : 'Preparation mode';
-  const missing = []; if (!session.rpcConfigured) missing.push('SOLANA_RPC_URL'); if (!session.simulationConfigured) missing.push('BUNDLE_SIMULATION_RPC_URL');
+  const missing = []; if (!session.rpcConfigured) missing.push('SOLANA_RPC_URL'); if (!session.simulationConfigured) missing.push('BUNDLE_SIMULATION_RPC_URL'); if (!session.uploadsConfigured) missing.push('PINATA_JWT');
   if (!session.creators.ready) missing.push('CREATOR_PRIVATE_KEY_1');
   $('#notice').textContent = missing.length ? `Railway setup needed: ${missing.join(', ')}. Submission also requires ENABLE_LAUNCH=true and successful bundle simulation.` : session.launchEnabled ? 'Mainnet transactions use real SOL. Submission requires your explicit review and approval.' : 'Submission is disabled. You can prepare and simulate; enable it with ENABLE_LAUNCH=true in Railway when ready.';
+});
+function showEvidence() {
+  $('#evidence').hidden = false;
+  $('#evidence-state').textContent = prepared.confirmed ? 'RPC confirms the signed transactions. Axiom indexing is checked separately.' : 'Submitted to Jito; on-chain confirmation is still pending. Refresh status before interpreting Axiom.';
+  $('#evidence-mint').textContent = prepared.mint;
+  const links = $('#evidence-links'); links.replaceChildren();
+  for (const [text, href] of [['Token on Solscan', 'https://solscan.io/token/' + prepared.mint], ...prepared.signatures.map((s, i) => ['Transaction ' + (i + 1), 'https://solscan.io/tx/' + s]), ['Open Axiom and search the mint', 'https://axiom.trade']]) {
+    const a = el('a', text); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; links.append(a, document.createTextNode(' '));
+  }
+}
+$('#compare-axiom').addEventListener('click', () => {
+  try {
+    if (!prepared?.confirmed) throw new Error('Refresh status until the launch is confirmed before comparing Axiom.');
+    const raw = $('#axiom-json').value;
+    if (raw.length > 50000) throw new Error('Paste a single pair-info response, up to 50 KB.');
+    const result = compareAxiomRecord(JSON.parse(raw), prepared);
+    $('#axiom-result').textContent = JSON.stringify(result, null, 2);
+  } catch (error) { $('#axiom-result').textContent = error instanceof SyntaxError ? 'Paste valid JSON from Axiom’s pair-info response.' : error.message; }
 });
 window.addEventListener('pagehide', clearWallets);
 

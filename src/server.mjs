@@ -4,22 +4,23 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import bs58 from 'bs58';
 import { createAuth } from './auth.mjs';
-import { validateSpec, verifyAuthorization, verifySignedTransactions, fail } from './validation.mjs';
+import { address, validateSpec, verifyAuthorization, verifySignedTransactions, fail } from './validation.mjs';
 import { createChain } from './chain.mjs';
 import { runDiagnostics } from './diagnostics.mjs';
 import { createCreatorWallets } from './creator-wallets.mjs';
 import { createStorage, IMAGE_TYPES, MAX_IMAGE_BYTES } from './storage.mjs';
+import { validateTestSpec, requireTestName } from './test-launch-policy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export function createApp(env = process.env, injectedChain, injectedStorage) {
+export function createApp(env = process.env, injectedChain, injectedStorage, { testLaunchOnly = false } = {}) {
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', 1);
   const auth = createAuth({ password: env.APP_PASSWORD, production: env.NODE_ENV === 'production' });
   const chain = injectedChain || createChain(env);
   const creators = createCreatorWallets(env);
   const storage = injectedStorage || createStorage(env);
-  const challenges = new Map(), bundles = new Map();
+  const challenges = new Map(), bundles = new Map(), uploads = new Map();
   const now = Date.now;
-  const cleanup = setInterval(() => { for (const map of [challenges, bundles]) for (const [id, row] of map) if (row.expires < now()) map.delete(id); }, 60000); cleanup.unref();
+  const cleanup = setInterval(() => { for (const map of [challenges, bundles, uploads]) for (const [id, row] of map) if (row.expires < now()) map.delete(id); }, 60000); cleanup.unref();
   const origin = req => env.APP_ORIGIN || (env.RAILWAY_PUBLIC_DOMAIN ? `https://${env.RAILWAY_PUBLIC_DOMAIN}` : `${req.protocol}://${req.get('host')}`);
   app.use((req, res, next) => {
     res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=()', 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" });
@@ -28,7 +29,7 @@ export function createApp(env = process.env, injectedChain, injectedStorage) {
     next();
   });
   app.use(express.json({ limit: '20kb', strict: true }));
-  app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
+  app.get('/healthz', (_req, res) => res.json({ status: 'ok', ...(testLaunchOnly ? { mode: 'owned-wallet-test-launch', version: '2.1.0' } : {}) }));
   app.get('/login', (_req, res) => res.sendFile(path.join(root, 'web/login.html')));
   app.get('/style.css', (_req, res) => res.sendFile(path.join(root, 'web/style.css')));
   app.get('/login.js', (_req, res) => res.sendFile(path.join(root, 'web/login.js')));
@@ -53,10 +54,13 @@ export function createApp(env = process.env, injectedChain, injectedStorage) {
     next();
   });
   app.post('/auth/logout', (req, res) => { auth.logout(req); res.set('Set-Cookie', auth.cookie('', 0)); res.json({ ok: true }); });
-  app.get('/api/session', (req, res) => res.json({ csrf: req.session.csrf, expires: req.session.expires, launchEnabled: chain.enabled, rpcConfigured: chain.configured, simulationConfigured: chain.simulationConfigured, creators: creators.describe(), uploadsConfigured: storage.configured }));
+  app.get('/api/session', (req, res) => res.json({ csrf: req.session.csrf, expires: req.session.expires, launchEnabled: chain.enabled, rpcConfigured: chain.configured, simulationConfigured: chain.simulationConfigured, creators: creators.describe(), uploadsConfigured: storage.configured, testLaunchOnly }));
   app.get('/api/readiness', (_req, res) => res.json({ ...(app.locals.readiness || { pending: true }), creators: creators.describe() }));
   app.get('/', (_req, res) => res.sendFile(path.join(root, 'web/index.html')));
   app.get('/app.js', (_req, res) => res.sendFile(path.join(root, 'dist/app.js')));
+  app.get('/research', (_req, res) => res.sendFile(path.join(root, 'web/research.html')));
+  app.get('/research.js', (_req, res) => res.sendFile(path.join(root, 'dist/research.js')));
+  app.get('/research.css', (_req, res) => res.sendFile(path.join(root, 'web/research.css')));
   app.post('/api/upload-metadata', express.raw({ type: IMAGE_TYPES, limit: MAX_IMAGE_BYTES }), async (req, res) => {
     const text = (v, max, label, optional) => {
       const value = typeof v === 'string' ? v.trim() : '';
@@ -64,11 +68,25 @@ export function createApp(env = process.env, injectedChain, injectedStorage) {
       return value;
     };
     const name = text(req.query.name, 32, 'name'), symbol = text(req.query.symbol, 10, 'symbol'), description = text(req.query.description, 500, 'description', true);
-    res.json(await storage.uploadToken({ image: Buffer.isBuffer(req.body) ? req.body : null, contentType: req.get('content-type')?.split(';')[0], name, symbol, description }));
+    let roles, finalDescription = description;
+    if (testLaunchOnly) {
+      requireTestName(name);
+      roles = { dev: address(req.query.launcher), creator: address(req.query.creator) };
+      creators.requireWallet(roles.creator);
+      if (uploads.size >= 200) fail('Too many recent uploads. Wait for old uploads to expire.', 429);
+      finalDescription = `Research test token for observing launch attribution. Launcher: ${roles.dev}. Creator fee wallet: ${roles.creator}. ${description}`;
+    }
+    const result = await storage.uploadToken({ image: Buffer.isBuffer(req.body) ? req.body : null, contentType: req.get('content-type')?.split(';')[0], name, symbol, description: finalDescription });
+    if (testLaunchOnly) uploads.set(req.session.id + ':' + result.uri, { ...roles, name, symbol, expires: now() + 3600000 });
+    res.json(result);
   });
   app.post('/api/authorize', (req, res) => {
-    const spec = validateSpec(req.body);
+    const spec = testLaunchOnly ? validateTestSpec(req.body) : validateSpec(req.body);
     creators.requireWallet(spec.creator);
+    if (testLaunchOnly) {
+      const uploaded = uploads.get(req.session.id + ':' + spec.uri);
+      if (!uploaded || uploaded.expires < now() || ['dev', 'creator', 'name', 'symbol'].some(key => uploaded[key] !== spec[key])) fail('Upload research metadata for these exact wallets and token details in this session first.', 403);
+    }
     if (challenges.size >= 200) fail('Too many pending authorizations. Wait for them to expire.', 429);
     const id = randomBytes(24).toString('hex'), expires = now() + 600000;
     const message = `Pump Private Launcher — creator authorization\nOrigin: ${origin(req)}\nThis is a message signature, not a transaction.\nI authorize this app to record my wallet as creator of the following token.\nMint: ${spec.mint}\nCreator: ${spec.creator}\nLauncher: ${spec.dev}\nName: ${spec.name}\nSymbol: ${spec.symbol}\nMetadata: ${spec.uri}\nSettings SHA-256: ${createHash('sha256').update(JSON.stringify(spec)).digest('hex')}\nExpires: ${new Date(expires).toISOString()}\nNonce: ${id}`;
@@ -81,10 +99,10 @@ export function createApp(env = process.env, injectedChain, injectedStorage) {
     // Only a key configured on the server can authorize a creator. Never accept a
     // client-supplied approval or expose a general-purpose signing endpoint.
     const signature = creators.signAuthorization(challenge.spec.creator, challenge.message);
-    if (signature !== null && !verifyAuthorization(challenge.message, signature, challenge.spec.creator)) fail('Creator authorization failed.', 403);
+    if (!verifyAuthorization(challenge.message, signature, challenge.spec.creator)) fail('Creator authorization failed.', 403);
     challenge.used = true;
     if (bundles.size >= 100) fail('Too many prepared bundles. Wait for them to expire.', 429);
-    const prepared = await chain.prepare(challenge.spec);
+    const prepared = { ...await chain.prepare(challenge.spec), launcher: challenge.spec.dev, creator: challenge.spec.creator };
     const id = randomBytes(24).toString('hex');
     bundles.set(id, { ...prepared, session: req.session.id, expires: now() + 600000, state: 'prepared', signed: null });
     res.json({ id, ...prepared });
@@ -131,7 +149,7 @@ export function createApp(env = process.env, injectedChain, injectedStorage) {
     res.status(status).json({ error: error.status ? error.message : 'Operation failed. Check provider configuration, balances and current protocol support, then prepare again.' });
   });
   app.locals.creatorConfiguration = () => { const { ready, error, wallets } = creators.describe(); return { ready, error, count: wallets.length }; };
-  app.locals.close = () => { clearInterval(cleanup); auth.close(); creators.close(); };
+  app.locals.close = () => { clearInterval(cleanup); auth.close(); creators.close(); challenges.clear(); bundles.clear(); uploads.clear(); };
   return app;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

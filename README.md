@@ -1,40 +1,55 @@
-# Private Attribution Research · Version 2
+# Private Research Test Launcher · 2.1
 
-The existing password-protected website now opens an interactive **offline research model**. No download or local setup is needed to use the deployed page.
+The default website now prepares a **real Pump.fun mainnet test launch** using a launch wallet and one to three buyer wallets. It requires a complete signed bundle simulation, a cost review, and an explicit submit action. The offline attribution model remains at **/research**.
+
+This tests attribution of a new token. It does not recreate the earlier 3/4 migration-history discrepancy, migrate existing tokens, or change Axiom's records. Simulation alone does not create a token or make it appear on Axiom.
 
 ## Use the website
 
-1. Open the existing Railway URL and enter the same workspace password.
-2. Select the four-token or six-token sample.
-3. Compare original launches, migrations initiated, and the illustrative stored-deployer grouping.
-4. Optionally expand the wallet-label section and enter names and **public addresses** for wallets you control.
+1. Open the existing Railway URL and enter your existing password.
+2. Enter a test name, symbol and image. The app adds **[TEST]** to the public token name and identifies the launcher and creator fee wallet in its metadata.
+3. Import or connect the launch wallet and your buyer wallets. Turn off unused buyers. Private keys entered on the website stay in the tab; they are not included in API request bodies or storage.
+4. Select a creator wallet configured with a valid private key in Railway. A different creator fee wallet is supported only when its key authorizes the exact launch settings. Public-address-only creator entries are rejected.
+5. Prepare the bundle and inspect the mint, launcher, creator, buy limits, network fees, rent allowances and Jito tip.
+6. Click **Sign & simulate bundle**. This does not broadcast a launch.
+7. To perform the real test, review the confirmation and click **Launch test on mainnet** within 30 seconds of a successful simulation. This spends real SOL. Refresh status to check on-chain confirmation.
+8. Search the confirmed mint in Axiom. The page provides Solscan links and an optional local comparison of a pasted Axiom pair-info JSON response. That JSON is user-supplied evidence, not an authenticated API response fetched by this app.
 
-All token records are simulated. Public addresses are labels held only in the current tab. They are not sent to the server, persisted, connected to a wallet extension, or used to retrieve actual history. Reloading clears them.
+The creator authorizes a bounded message, rather than supplying the launch transaction signature. The launcher, mint and selected buyers sign the actual transactions. Key control is checked cryptographically; this does not establish legal ownership or that every key belongs to the same human.
 
-The earlier fixture illustrates one original launch and three migrations by the selected wallet, producing a 3/4 stored-deployer grouping. The later fixture adds two original launches, producing 3/6. The original launch identities remain separate in both views.
+## Research limits
 
-## Scope
+- Initial buys: at most **0.25 SOL total**, before slippage, network fees, rent and tip.
+- Jito tip: at most **0.005 SOL**.
+- Priority price: at most **100,000 micro-lamports per CU**.
+- Developer buy may be zero; at least one buyer is required.
+- Names must begin with **[TEST]**. Metadata must be generated in the authenticated session for the exact token name, symbol, launcher and creator.
+- No migration or creator-transfer endpoint is included.
 
-This is an illustrative data model, not Axiom's backend source or a current Pump program test. It cannot demonstrate that a new live migration would receive the same attribution. No on-chain migration, token launch, transaction signing, metadata upload, RPC request, or Jito submission is available in this version.
+Submission is locked unless the complete bundle passes signature verification and simulation. A Jito receipt is not on-chain confirmation. A successful launch does not guarantee Axiom indexing or any particular displayed history.
 
-The default server is now **src/research-server.mjs** and the browser bundle is **dist/research.js**. Earlier launcher source files remain in the repository, but this server does not import them, load wallet keys, start chain diagnostics, or expose their transaction endpoints. A stale browser tab receives HTTP 410 from retired transaction routes. ENABLE_LAUNCH cannot enable them in the research server.
+## Railway variables
 
-## Railway
-
-The existing GitHub main branch remains the deployment source, using the existing service and domain.
+Existing service, domain and password are reused. No new variable names are required.
 
 | Variable | Purpose |
 | --- | --- |
-| APP_PASSWORD | Existing workspace password, 5–256 characters. Required. |
-| PORT | Listening port, normally provided by Railway. Defaults to 3000. |
-| NODE_ENV | Set to production for Secure cookies and HSTS. |
-| APP_ORIGIN | Optional exact custom-domain origin. Otherwise Railway's public domain is used. |
+| APP_PASSWORD | Workspace password, 5–256 characters. |
+| SOLANA_RPC_URL | HTTPS Solana mainnet RPC. Network is verified before preparation. |
+| BUNDLE_SIMULATION_RPC_URL | HTTPS provider that supports the complete simulateBundle API. A standard RPC URL may not support this method. |
+| JITO_BLOCK_ENGINE_URL | HTTPS Jito bundle endpoint; Amsterdam is the default. |
+| JITO_AUTH_UUID | Optional Jito authentication. |
+| PINATA_JWT | Image and metadata upload credential. |
+| CREATOR_PRIVATE_KEY_1 | Your valid base58 private key or 64-byte keypair JSON; never just a public address. Numbered entries 1–50 are supported. |
+| CREATOR_LABEL_1 | Optional label for that creator. |
+| ENABLE_LAUNCH | Must be exactly true to permit user-reviewed submission. Otherwise preparation and simulation only. |
+| NODE_ENV | production enables Secure cookies and HSTS. |
+| PORT | Normally supplied by Railway, defaults to 3000. |
+| APP_ORIGIN | Optional exact custom-domain origin. |
 
-Existing chain, Jito, upload and private-key variables are unused by this version. No new variable is required. Secrets should never be committed.
+Do not commit credentials. Keep one Railway replica because sessions, pending bundles and metadata bindings are in memory. Restarting invalidates them.
 
-Sessions remain in memory for one hour. A deployment or restart logs users out. Keep one replica.
-
-## Development and validation
+## Validation and development
 
 Node 22 or newer; Docker uses Node 24.
 
@@ -42,10 +57,12 @@ Node 22 or newer; Docker uses Node 24.
     npm test
     npm start
 
-Set APP_PASSWORD in your shell before starting. For local HTTP development, omit NODE_ENV=production.
+`npm test` builds both browser bundles first. The suite uses generated test keys, an SDK Global fixture and mocked providers for submission tests. It does not spend SOL, upload metadata or claim a funded live launch was tested. Startup diagnostics read mainnet and simulate an unfunded probe; the full funded bundle must pass simulation in the website.
 
-`npm test` builds the browser bundle before running the suite. For a deployment-only build, use `npm run build`.
+Default entrypoint: **src/test-launch-server.mjs**. The earlier offline-only entrypoint remains available as **src/research-server.mjs**. Both interfaces are password-protected.
 
-Research tests cover both expected sample counts, preservation of original launch identity, duplicate rejection, self-migration, unknown-wallet rejection, password gating, five-character passwords, origin/CSRF protections, logout, and disabled live endpoints even when ENABLE_LAUNCH=true. Existing legacy unit tests remain available in the same test suite.
+## Protocol references
 
-The research browser bundle contains no Solana SDK, signing or transaction code. Wallet labels are handled as text, not HTML.
+- [Solana simulation](https://solana.com/docs/rpc/http/simulatetransaction): simulation does not broadcast.
+- [Jito bundles](https://docs.jito.wtf/lowlatencytxnsend/): bundle submission receipts and confirmation are separate.
+- [Pump public documentation](https://github.com/pump-fun/pump-public-docs): official protocol documentation; actual transaction success is still checked by simulation.

@@ -74,6 +74,7 @@ export function createChain(env) {
   return {
     configured: Boolean(env.SOLANA_RPC_URL), simulationConfigured: Boolean(simulationUrl), enabled: env.ENABLE_LAUNCH === 'true',
     async prepare(spec) {
+      if (await connection.getGenesisHash() !== '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d') fail('The configured RPC must be Solana mainnet.', 503);
       const [global, feeConfig, recent, tips, existing] = await Promise.all([sdk.fetchGlobal(), sdk.fetchFeeConfig(), connection.getLatestBlockhash('confirmed'), jito('getTipAccounts', []), connection.getAccountInfo(new PublicKey(spec.mint))]);
       if (existing) fail('Mint already exists. Generate a new mint.');
       if (!Array.isArray(tips) || tips.length === 0) fail('Jito returned no tip accounts.', 502);

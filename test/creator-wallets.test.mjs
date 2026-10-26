@@ -36,11 +36,12 @@ test('empty placeholders are ignored, invalid numbering and labels fail closed',
   for (const name of ['CREATOR_PRIVATE_KEY_0', 'CREATOR_PRIVATE_KEY_51', 'CREATOR_PRIVATE_KEY_01', 'CREATOR_PRIVATE_KEY_X']) assert.equal(createCreatorWallets({ [name]: key }).describe().ready, false);
   assert.equal(createCreatorWallets({ CREATOR_PRIVATE_KEY_1: key, CREATOR_LABEL_1: 'x'.repeat(41) }).describe().ready, false);
 });
-test('a plain public address is accepted as an address-only creator', () => {
+test('a plain public address cannot authorize a creator', () => {
   const key = Keypair.generate(), address = key.publicKey.toBase58();
   const wallets = createCreatorWallets({ CREATOR_PRIVATE_KEY_1: address, CREATOR_LABEL_1: 'Pump' });
   const state = wallets.describe();
-  assert.equal(state.ready, true); assert.deepEqual(state.wallets, [{ address, label: 'Pump', number: 1 }]);
-  assert.equal(wallets.signAuthorization(address, 'x'), null);
+  assert.equal(state.ready, false); assert.deepEqual(state.wallets, []);
+  assert.match(state.error, /cannot prove control/);
+  assert.throws(() => wallets.signAuthorization(address, 'x'));
   wallets.close();
 });

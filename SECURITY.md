@@ -1,19 +1,18 @@
-# Security · Research version 2
+# Security · Research Test Launcher 2.1
 
-This service is a password-protected offline attribution demonstration.
+- The default entrypoint can submit real mainnet transactions only after explicit user confirmation, a complete signed simulation and ENABLE_LAUNCH=true.
+- Creator public addresses alone are rejected. A valid configured key must authorize the exact settings in a session-bound, single-use message. The signature is not exported as a general-purpose signing service.
+- Launcher and buyer keys entered in the browser remain in memory. Private-key inputs have no form names and are cleared after import. Signing is local; the backend receives only public settings and signed transactions. JavaScript cannot guarantee secure memory erasure.
+- The server checks every transaction signature and the exact prepared message before simulation and submission. Client edits cannot replace recipients, amounts, mint, creator or instructions.
+- Research metadata is bound to the session, token details and wallet identities. The visible token name must begin with [TEST]. Research spend limits are enforced server-side.
+- Simulation failure, expired simulation, invalid confirmation, disabled launch or an invalid network blocks submission. Unknown submission outcomes are not automatically retried.
+- APP_PASSWORD accepts 5–256 characters and fails closed. scrypt and timing-safe comparisons protect password verification. Sessions and rate limits are in memory.
+- Cookies are HttpOnly and SameSite=Strict. Production adds Secure and the __Host- prefix. Origin and CSRF checks protect authenticated mutations.
+- Responses use restrictive CSP, no-store, no-referrer and frame protections. No analytics or external browser scripts are used.
+- Secrets, provider URLs, request bodies and cookies must not be logged. Startup diagnostics export sanitized results only.
+- Axiom JSON comparison happens locally and treats pasted data as unverified evidence. Dynamic content is rendered as text.
+- /research remains an illustrative offline model, separate from the real launch interface. Neither page can verify Axiom's private backend logic.
+- No migration, creator-transfer or history-editing operation is exposed.
+- Use one replica. Restarts clear sessions, metadata bindings and pending bundles.
 
-- APP_PASSWORD must contain 5–256 characters. Missing or invalid configuration locks access.
-- Passwords are hashed with scrypt and compared with timingSafeEqual. Session tokens use cryptographic randomness and are stored as hashes in memory.
-- Production cookies are Secure, HttpOnly, SameSite=Strict and use the __Host- prefix.
-- Origin checks and a session-bound CSRF token protect authenticated mutations.
-- Login attempts are rate-limited globally and per client.
-- Pages use a restrictive same-origin CSP and no analytics or external scripts.
-- Wallet names and optional public-address labels remain only in the current tab. The server does not receive those fields.
-- This server does not import the earlier chain, creator-wallet or storage modules. It never reads private-key, Solana RPC, Jito or upload credentials.
-- Retired transaction and upload endpoints return 410 after authentication. ENABLE_LAUNCH does not restore them.
-- The earlier source files are retained for provenance but are not the current application entrypoint.
-- Preserve the private GitHub repository and Railway access controls. The application password does not secure the hosting or source-control accounts.
-- One-hour sessions and rate-limit state are memory-only; deployments clear them. Keep one replica.
-- Simulation output is not evidence of live ownership, current Pump program execution, or Axiom's current backend indexing.
-
-This version is not a wallet, token launch service, or live blockchain test.
+Automated provider tests use mocks and generated keys. Passing them is not evidence that a funded launch has landed or that Axiom has indexed it.

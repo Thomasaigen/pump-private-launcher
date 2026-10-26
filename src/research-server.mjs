@@ -24,6 +24,7 @@ export function createResearchApp(env = process.env) {
   app.get('/healthz', (_req, res) => res.json({ status: 'ok', mode: 'offline-research', version }));
   app.get('/login', (_req, res) => res.sendFile(path.join(root, 'web/research-login.html')));
   app.get('/style.css', (_req, res) => res.sendFile(path.join(root, 'web/research.css')));
+  app.get('/research.css', (_req, res) => res.sendFile(path.join(root, 'web/research.css')));
   app.get('/login.js', (_req, res) => res.sendFile(path.join(root, 'web/login.js')));
   app.post('/auth/login', (req, res) => {
     const result = auth.login(req.body?.password, req.ip);
